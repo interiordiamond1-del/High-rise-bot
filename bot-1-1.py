@@ -27,6 +27,7 @@ OWNER-ONLY COMMANDS (sirf LANAX4 / OWNER_USER_ID use kar sakta hai)
 
 import asyncio
 import time
+from datetime import datetime
 from highrise import BaseBot, User
 from highrise.models import Position, SessionMetadata
 
@@ -136,6 +137,7 @@ class Bot(BaseBot):
         self.bot_user_id = None
         self._last_emote_time = {}      # user_id -> timestamp (cooldown)
         self._last_emote_used = {}      # user_id -> emote_id (last emote they played)
+        self._join_times = {}           # user_id -> datetime jab woh room mein aaya
         self._follow_target_username = None
         self._follow_task = None
 
@@ -153,10 +155,14 @@ class Bot(BaseBot):
             print("Startup message error:", e)
 
     async def on_user_join(self, user: User, *args, **kwargs) -> None:
+        join_time = datetime.now()
+        self._join_times[user.id] = join_time
+        time_str = join_time.strftime("%d-%b-%Y %I:%M %p")
+        print(f"➡️ {user.username} room mein aaya: {time_str}")
         if not WELCOME_MESSAGE_ENABLED:
             return
         try:
-            await self.highrise.chat(f"👋 Welcome, {user.username}!")
+            await self.highrise.chat(f"👋 Welcome, {user.username}! (Aaye: {time_str})")
         except Exception as e:
             print("Welcome message error:", e)
 
@@ -467,6 +473,18 @@ class Bot(BaseBot):
                 print("Who error:", e)
             return True
 
+        if lower.startswith("!joined "):
+            target_name = text[8:].strip()
+            target_user, _ = await self._get_position(target_name)
+            if target_user is None:
+                await self.highrise.chat(f"⚠️ '{target_name}' room mein nahi mila.")
+            elif target_user.id in self._join_times:
+                jt = self._join_times[target_user.id]
+                await self.highrise.chat(f"🕒 {target_name} is baar room mein aaya: {jt.strftime('%d-%b-%Y %I:%M %p')}")
+            else:
+                await self.highrise.chat(f"⚠️ '{target_name}' ka join-time record nahi hai (shayad bot start hone se pehle aaya tha).")
+            return True
+
         return False
 
     # ============================ HELPER (LIGHT) COMMANDS ==============
@@ -496,7 +514,7 @@ class Bot(BaseBot):
         await self.highrise.chat(f"👑 Public: numbers (1-{len(EMOTES)}) chalao, '0' ya '!stop' se roko, '!emotes <page>' se list dekho.")
         await self.highrise.chat("👑 Owner commands (1/3): !come | !follow | !unfollow | !goto <user> | !tp x y z | !tpto <user> | !bring <user>")
         await self.highrise.chat("👑 Owner commands (2/3): !test <id> | !addemote <n> <id> | !removeemote <n> | !announce <msg> | !whisper <user> <msg> | !react <user> <reaction>")
-        await self.highrise.chat("👑 Owner commands (3/3): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !sendto <user> <room_id> | !addhelper/!removehelper <user>")
+        await self.highrise.chat("👑 Owner commands (3/3): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !joined <user> | !sendto <user> <room_id> | !addhelper/!removehelper <user>")
 
     # ============================ CORE HELPERS ==========================
     def _is_owner(self, user: User) -> bool:
