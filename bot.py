@@ -68,7 +68,7 @@ import random
 import time
 from datetime import datetime
 
-from highrise import BaseBot, User, __main__
+from highrise import BaseBot, User, __main__, BotDefinition
 from highrise.models import Position, SessionMetadata
 
 
@@ -828,7 +828,7 @@ class Bot(BaseBot):
 # ============================ SINGLE-ROOM RUNNER ========================
 async def main():
     """Sirf EK room mein connect karta hai — multilogin crash yahi se fix hota hai."""
-    definitions = [(Bot, ROOM_ID, BOT_TOKEN)]
+    definitions = [BotDefinition(Bot, ROOM_ID, BOT_TOKEN)]
     await __main__.main(definitions)
 
 
