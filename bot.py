@@ -14,11 +14,11 @@ aapka BOT ka apna ID hai, koi room ID nahi. Isiliye Highrise
 "Room not found" error deta raha.
 
 Aapke diye hue links:
-  https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
-  https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160&...
+6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
+6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160&...
 
-  -> "id="        = bot/world ka ID   (ROOM ID NAHI HAI)
-  -> "ownedRoomId="  = ASLI ROOM ID (yehi neeche ROOMS list mein daala hai)
+  -> "id="        = bot/world ka ID   (64dc75dbf71c6ae119bffa47)
+  -> "ownedRoomId="  = ASLI ROOM ID (63fcc70dfb16e9c663269160)
 
 --------------------------------------------------------------------
 RENDER PAR DEPLOY KARNE KA TAREEKA:
