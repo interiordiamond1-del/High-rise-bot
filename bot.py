@@ -830,7 +830,7 @@ class Bot(BaseBot):
 async def main():
     """Sirf EK room mein connect karta hai — multilogin crash yahi se fix hota hai."""
     definitions = [BotDefinition(Bot, ROOM_ID, BOT_TOKEN)]
-    await main()
+    
 
 
 if __name__ == "__main__":
