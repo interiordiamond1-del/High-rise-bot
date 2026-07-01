@@ -68,7 +68,8 @@ import random
 import time
 from datetime import datetime
 
-from highrise import BaseBot, User, __main__, BotDefinition
+from highrise import BaseBot, User
+from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
 
 
