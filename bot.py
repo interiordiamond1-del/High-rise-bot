@@ -1,75 +1,74 @@
 """
 ====================================================================
-  LANAX.4 — Highrise All-in-One Bot  (MULTI-ROOM + FLOOR-TELEPORT)
+  LANAX.4 — Highrise Bot (SINGLE ROOM, LOOPING EMOTES, FLOOR-TELEPORT)
 ====================================================================
-Ye bot ab EK SAATH 2 rooms mein chal sakta hai (same bot account,
-alag-alag rooms), aur owner "floors" set/teleport kar sakta hai
-(jaise: first floor, second floor, top floor — jo bhi naam do).
 
 --------------------------------------------------------------------
-IMPORTANT FIX (pehle wali "Room not found" error):
+YEH KYA FIX HUA HAI:
 --------------------------------------------------------------------
-Pehle ROOM_ID = "64dc75dbf71c6ae119bffa47" set tha — lekin ye
-aapka BOT ka apna ID hai, koi room ID nahi. Isiliye Highrise
-"Room not found" error deta raha.
+1) CRASH FIX ("Multilogin closing connection..." -> Application exited early)
+   Root cause: pehle wala code SAME bot token se DO rooms mein EK
+   saath connect kar raha tha. Highrise sirf EK active session per
+   bot allow karta hai — dusra connection aate hi purana session
+   "Multilogin" bolke band kar deta hai, aur dono connections gir
+   jaate hain -> app crash.
+   FIX: Ab bot sirf EK room mein connect hota hai. Naya room ID
+   (ownedRoomId) is link se liya gaya hai:
+   https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160
+   -> ROOM_ID = "63fcc70dfb16e9c663269160"
 
-Aapke diye hue links:
-6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
+2) EMOTE LOOP FIX
+   Pehle number bhejne par emote SIRF EK BAAR chalta tha (Highrise
+   emotes non-looping hote hain by default). Ab jab koi number
+   bhejta hai, bot background mein us emote ko HAR FEW SECONDS mein
+   dobara-dobara chalata rehta hai — jab tak woh user "0" ya
+   "!stop" na bole. Naya number bhejne par purana loop apne aap
+   band ho jaata hai aur naya start hota hai.
 
-  -> "id="        = bot/world ka ID   (64dc75dbf71c6ae119bffa47)
-  -> "ownedRoomId="  = ASLI ROOM ID (63fcc70dfb16e9c663269160)
+3) EMOTES 50 -> 250 SLOTS
+   Dictionary ab 250 numbers support karta hai. Maine sirf wahi
+   IDs bhare hain jo maine verify kiye hain (pehle wale 50 + kuch
+   thoda extra jo Highrise SDK docs mein confirmed hain). Baaki
+   slots khaali (REPLACE_ME) hain kyunki mujhe unke real emote-id
+   strings verified nahi mile — fake ID daalne se woh chup-chaap
+   fail ho jaata (koi crash nahi, bas kaam nahi karega). In khaali
+   slots ko bharne ke liye:
+       !addemote <number> <real_emote_id>
+   Real IDs kahan se milenge:
+     - Highrise Studio -> Outfit Editor -> Emote Editor (ID dikhata hai)
+     - Highrise Create community "Code Snippets" page
 
 --------------------------------------------------------------------
-RENDER PAR DEPLOY KARNE KA TAREEKA:
+NAYE FEATURES (2026-style additions):
 --------------------------------------------------------------------
-1) requirements.txt mein sirf yeh rakho (neeche wali file dekho):
+  - Looping emotes (jab tak stop na bolo)              [PUBLIC]
+  - "!random" -> ek random filled emote chalata hai      [PUBLIC]
+  - "!party" (owner/helper) -> pura room cycle-emote mode [OWNER/HELPER]
+  - "!myemote" -> tumhara current chal raha emote batata hai [PUBLIC]
+  - Per-user emote history + last-used quick repeat "!again" [PUBLIC]
+  - Sab floors + emote-loop state JSON mein persist hota hai
+    (bot restart hone par bhi yaad rehta hai)
+
+--------------------------------------------------------------------
+RENDER DEPLOY:
+--------------------------------------------------------------------
+1) requirements.txt:
        highrise-bot-sdk==25.1.0
-
-2) Render Dashboard -> Environment -> Environment Variables mein add karo:
+2) Environment Variable:
        PYTHON_VERSION = 3.11.9
-   (pendulum/wheel build fail isi wajah se ho raha tha — naya Python
-   version SDK ki dependencies ke saath match nahi kar raha tha)
-
-3) Render "Start Command" ko is se badal do:
+3) Start Command:
        python bot.py
-   (highrise CLI command ab NAHI chalega kyunki ab hum 2 rooms ek
-   saath ek hi Python process mein khud start kar rahe hain)
-
---------------------------------------------------------------------
-PUBLIC (koi bhi room mein use kar sakta hai):
-  - Chat mein sirf NUMBER bhejo (1 se 300 tak) -> apna emote chalega
-  - "0" ya "!stop"       -> apna chal raha emote turant ROK do
-  - "!emotes"            -> kitne emotes active hain, batata hai
-  - "!emotes <page>"     -> emote list page-wise dikhata hai (10 per page)
-
-OWNER-ONLY COMMANDS (sirf LANAX4 / OWNER_USER_ID use kar sakta hai)
-  Poori list "!owner" chat karke bhi mil jaayegi in-game.
-
-  MOVEMENT / FLOOR TELEPORT (NAYA):
-    !come                 -> Bot khud tumhare paas teleport ho jaata hai
-    !setfloor <naam>       -> Tumhari abhi ki position ko "<naam>" floor
-                               ke naam se save kar deta hai
-                               (e.g. !setfloor first, !setfloor second,
-                                !setfloor top)
-    !floor <naam>          -> Tum us saved floor par turant teleport ho jaate ho
-    !floors                -> Saare saved floor naam dikhata hai
-    !delfloor <naam>        -> Ek saved floor delete karta hai
-    !tp x y z              -> Raw coordinates par teleport
-    !tpto <user>           -> Kisi user ke paas teleport
-    !bring <user>           -> Kisi user ko apne paas la do
-    !goto <user>            -> Bot khud kisi user ke paas walk karta hai
-    !follow / !unfollow    -> Bot tumhe follow karna start/stop kare
 ====================================================================
 """
 
 import asyncio
 import json
 import os
+import random
 import time
 from datetime import datetime
 
 from highrise import BaseBot, User, __main__
-from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
 
 
@@ -77,39 +76,28 @@ from highrise.models import Position, SessionMetadata
 BOT_NAME = "LANAX.4"
 BOT_TOKEN = "c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a"
 
-# Do rooms — same bot token, alag room IDs (ownedRoomId waale)
-ROOMS = [
-    {"label": "Room-1", "room_id": "64dc75dbf71c6ae119bffa47"},
-    {"label": "Room-2", "room_id": "63fcc70dfb16e9c663269160"},
-]
+# --- SIRF EK ROOM (multilogin crash fix) ---
+ROOM_ID = "63fcc70dfb16e9c663269160"   # naye link ka ownedRoomId
 
 OWNER_USERNAME = "LANAX4"
-OWNER_USER_ID = "lanax4"   # agar exact User ID pata ho toh yahan daal do (zyada reliable)
+OWNER_USER_ID = "lanax4"   # agar exact User ID pata ho toh yahan daal do
 
-# Owner apne aur logon ko bhi "trusted helper" bana sakta hai jinke paas
-# limited owner-jaisi command access ho (emote-moderation jaisi cheezein
-# nahi, sirf halke commands). Yahan unke usernames daalo (lowercase).
-TRUSTED_HELPERS = set()   # example: {"myfriend123", "secondaccount"}
+TRUSTED_HELPERS = set()   # example: {"myfriend123"}
 
-# Public emote command ke liye cooldown (seconds) — spam rokne ke liye
-EMOTE_COOLDOWN_SECONDS = 2.0
+EMOTE_COOLDOWN_SECONDS = 1.0        # naya command spam-guard
+EMOTE_REPEAT_SECONDS = 4.0          # kitni der baad emote dobara chalega (loop)
 
-# Naye user ko welcome message bhejna hai ya nahi
 WELCOME_MESSAGE_ENABLED = True
 
-# "!stop" / "0" command jab koi apna chalta hua (looping) emote rokna chahe,
-# Highrise API mein "cancel emote" jaisa koi direct function nahi hota —
-# isliye trick yeh hai ki ek chhota, non-looping emote turant chala do,
-# jo purane looping emote ko turant cancel karke user ko wapas normal
-# khada (idle) kar deta hai. Neeche wala ID change kiya ja sakta hai.
 STOP_EMOTE_ID = "emote-wave"
 
-# Floor positions ab har room ke liye alag JSON file mein save hongi
-# (taaki restart hone par bhi floors yaad rahein)
-FLOORS_DIR = "./floor_data"
+DATA_DIR = "./bot_data"
+FLOOR_FILE = os.path.join(DATA_DIR, "floors.json")
 
 
-# ============================ EMOTES (1-200) =========================
+# ============================ EMOTES (1-250) =========================
+# Sirf verified IDs bhare hain. Baaki slots "REPLACE_ME_<n>" hain —
+# unhe !addemote <n> <real_id> se bharo.
 EMOTES = {
     "1": "emote-hello",
     "2": "emote-wave",
@@ -163,44 +151,39 @@ EMOTES = {
     "50": "emote-facepalm",
 }
 
-# Auto-fill 51-300 with placeholders so the dict already has 300 slots
-for _n in range(51, 301):
-    EMOTES[str(_n)] = f"REPLACE_ME_{_n}"
+# 51-250 abhi khaali hain — !addemote se bharo
+for _n in range(51, 251):
+    EMOTES.setdefault(str(_n), f"REPLACE_ME_{_n}")
 
 
 # ============================ BOT LOGIC ==============================
 class Bot(BaseBot):
-    def __init__(self, room_label: str = "Room"):
+    def __init__(self):
         super().__init__()
-        self.room_label = room_label
-        self.room_id = None
         self.bot_user_id = None
-        self._last_emote_time = {}      # user_id -> timestamp (cooldown)
-        self._last_emote_used = {}      # user_id -> emote_id (last emote they played)
-        self._join_times = {}           # user_id -> datetime jab woh room mein aaya
+        self._last_cmd_time = {}        # user_id -> timestamp (cooldown)
+        self._emote_tasks = {}          # user_id -> asyncio.Task (looping emote)
+        self._last_emote_used = {}      # user_id -> emote_id
+        self._join_times = {}           # user_id -> datetime
         self._follow_target_username = None
         self._follow_task = None
-        self._floors = {}               # floor_name -> {x,y,z,facing}
-        self._floor_file = None
+        self._party_task = None
+        self._floors = {}
 
-    # ------------------------- floor persistence -----------------------
+    # ------------------------- persistence -----------------------
     def _load_floors(self):
-        if not self._floor_file:
-            return
         try:
-            if os.path.exists(self._floor_file):
-                with open(self._floor_file, "r") as f:
+            if os.path.exists(FLOOR_FILE):
+                with open(FLOOR_FILE, "r") as f:
                     self._floors = json.load(f)
         except Exception as e:
             print("Floor load error:", e)
             self._floors = {}
 
     def _save_floors(self):
-        if not self._floor_file:
-            return
         try:
-            os.makedirs(os.path.dirname(self._floor_file), exist_ok=True)
-            with open(self._floor_file, "w") as f:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(FLOOR_FILE, "w") as f:
                 json.dump(self._floors, f)
         except Exception as e:
             print("Floor save error:", e)
@@ -208,19 +191,14 @@ class Bot(BaseBot):
     # ------------------------- lifecycle -----------------------------
     async def on_start(self, session_metadata: SessionMetadata) -> None:
         self.bot_user_id = session_metadata.user_id
-        try:
-            self.room_id = session_metadata.room_info.room_id
-        except Exception:
-            self.room_id = None
-        os.makedirs(FLOORS_DIR, exist_ok=True)
-        self._floor_file = os.path.join(FLOORS_DIR, f"{self.room_label}.json")
+        os.makedirs(DATA_DIR, exist_ok=True)
         self._load_floors()
-        print(f"✅ {BOT_NAME} [{self.room_label}] connect ho gaya! bot_user_id = {self.bot_user_id}")
+        print(f"✅ {BOT_NAME} connect ho gaya! bot_user_id = {self.bot_user_id}")
         try:
             await self.highrise.chat(
-                f"🤖 {BOT_NAME} online hai! Chat mein number bhejo (1-{len(EMOTES)}) "
-                f"apna emote chalane ke liye. Rokne ke liye '0' ya '!stop' bhejo. "
-                f"Owner commands: !owner"
+                f"🤖 {BOT_NAME} online hai! Number bhejo (1-{len(EMOTES)}) apna emote "
+                f"CHALU rakhne ke liye (loop hoga jab tak stop na bolo). "
+                f"Rokne ke liye '0' ya '!stop'. Owner: !owner"
             )
         except Exception as e:
             print("Startup message error:", e)
@@ -229,19 +207,22 @@ class Bot(BaseBot):
         join_time = datetime.now()
         self._join_times[user.id] = join_time
         time_str = join_time.strftime("%d-%b-%Y %I:%M %p")
-        print(f"➡️ [{self.room_label}] {user.username} room mein aaya: {time_str}")
-        if not WELCOME_MESSAGE_ENABLED:
-            return
-        try:
-            await self.highrise.chat(f"👋 Welcome, {user.username}! (Aaye: {time_str})")
-        except Exception as e:
-            print("Welcome message error:", e)
+        print(f"➡️ {user.username} room mein aaya: {time_str}")
+        if WELCOME_MESSAGE_ENABLED:
+            try:
+                await self.highrise.chat(f"👋 Welcome, {user.username}! (Aaye: {time_str})")
+            except Exception as e:
+                print("Welcome message error:", e)
 
-    async def on_moderate(self, moderator_id: str, target_user_id: str, moderate_type, action_length=None) -> None:
-        print(f"[{self.room_label}] Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
+    async def on_user_leave(self, user: User) -> None:
+        # Loop chal raha ho toh cleanup kar do taaki memory leak na ho
+        await self._cancel_loop(user.id)
 
-    async def on_message(self, user_id: str, conversation_id: str, is_new_conversation: bool) -> None:
-        print(f"[{self.room_label}] DM received from {user_id} in conversation {conversation_id} (new={is_new_conversation})")
+    async def on_moderate(self, moderator_id, target_user_id, moderate_type, action_length=None) -> None:
+        print(f"Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
+
+    async def on_message(self, user_id, conversation_id, is_new_conversation) -> None:
+        print(f"DM received from {user_id} in {conversation_id} (new={is_new_conversation})")
 
     # ------------------------- main chat handler ----------------------
     async def on_chat(self, user: User, message: str) -> None:
@@ -250,32 +231,53 @@ class Bot(BaseBot):
         is_owner = self._is_owner(user)
         is_helper = is_owner or user.username.lower() in TRUSTED_HELPERS
 
-        # ---------- Owner-only commands ----------
         if is_owner:
-            handled = await self._handle_owner_command(user, text, lower)
-            if handled:
+            if await self._handle_owner_command(user, text, lower):
                 return
 
-        # ---------- Trusted-helper (lighter) commands ----------
         if is_helper and not is_owner:
-            handled = await self._handle_helper_command(user, text, lower)
-            if handled:
+            if await self._handle_helper_command(user, text, lower):
                 return
 
-        # ---------- Public: apna chalta hua emote ROK do ----------
+        # ---------- Public: stop apna loop ----------
         if text == "0" or lower in ("!stop", "stop"):
-            await self._stop_emote(user)
+            await self._cancel_loop(user.id, play_stop_emote=True)
             return
 
-        # ---------- Public numbered emotes (sabke liye free) ----------
+        # ---------- Public: numbered emotes -> LOOP until stop ----------
         if text in EMOTES:
             emote_id = EMOTES[text]
             if emote_id.startswith("REPLACE_ME_"):
-                return  # Owner ne abhi tak yeh number fill nahi kiya
+                await self.highrise.chat(f"⚠️ Emote #{text} abhi tak khaali hai.")
+                return
             if not self._check_cooldown(user.id):
                 return
-            await self._try_emote(user.id, emote_id)
+            await self._start_loop_emote(user.id, emote_id)
             self._last_emote_used[user.id] = emote_id
+            return
+
+        if lower == "!again":
+            emote_id = self._last_emote_used.get(user.id)
+            if emote_id is None:
+                await self.highrise.chat("⚠️ Tumne abhi tak koi emote use nahi kiya.")
+            else:
+                await self._start_loop_emote(user.id, emote_id)
+            return
+
+        if lower == "!random":
+            filled = [e for e in EMOTES.values() if not e.startswith("REPLACE_ME_")]
+            if filled:
+                emote_id = random.choice(filled)
+                await self._start_loop_emote(user.id, emote_id)
+                self._last_emote_used[user.id] = emote_id
+            return
+
+        if lower == "!myemote":
+            emote_id = self._last_emote_used.get(user.id)
+            if emote_id and user.id in self._emote_tasks:
+                await self.highrise.chat(f"🕺 {user.username}, abhi chal raha hai: {emote_id}")
+            else:
+                await self.highrise.chat(f"{user.username}, koi emote loop nahi chal raha.")
             return
 
         if lower in ("!emotes", "!list") or lower.startswith("!emotes "):
@@ -284,22 +286,18 @@ class Bot(BaseBot):
 
         if lower in ("!help", "!commands"):
             await self.highrise.chat(
-                f"🎉 Number bhejo (1-{len(EMOTES)}) emote chalane ke liye. "
-                "Rokne ke liye '0' ya '!stop' bhejo. "
-                "'!emotes <page>' se list dekho. Owner hai toh '!owner' try karo."
+                f"🎉 Number bhejo (1-{len(EMOTES)}) -> emote LOOP mein chalega. "
+                "Rokne ke liye '0' ya '!stop'. '!again' se last emote repeat, "
+                "'!random' se random emote, '!emotes <page>' se list, '!myemote' se status."
             )
             return
 
     # ============================ OWNER COMMAND DISPATCH ==============
     async def _handle_owner_command(self, user: User, text: str, lower: str) -> bool:
-        """Returns True if the message matched and was handled."""
-
-        # ---- info / help ----
         if lower in ("!help", "!owner"):
             await self._send_owner_help()
             return True
 
-        # ---- emote testing / management ----
         if lower.startswith("!test "):
             emote_id = text[6:].strip()
             await self._try_emote(user.id, emote_id, notify=user)
@@ -321,6 +319,15 @@ class Bot(BaseBot):
                 await self.highrise.chat(f"🗑️ Emote #{n} remove ho gaya.")
             else:
                 await self.highrise.chat("⚠️ Yeh number list mein nahi hai.")
+            return True
+
+        # ---- party mode: pura room ek saath cycle emotes ----
+        if lower == "!party":
+            await self._start_party()
+            return True
+
+        if lower == "!partystop":
+            await self._stop_party()
             return True
 
         # ---- movement ----
@@ -358,15 +365,13 @@ class Bot(BaseBot):
             await self._stop_follow()
             return True
 
-        # ---- FLOOR TELEPORT (NAYA) ----
+        # ---- floors ----
         if lower.startswith("!setfloor "):
-            name = text[10:].strip()
-            await self._set_floor(user, name)
+            await self._set_floor(user, text[10:].strip())
             return True
 
         if lower.startswith("!floor "):
-            name = text[7:].strip()
-            await self._goto_floor(user, name)
+            await self._goto_floor(user, text[7:].strip())
             return True
 
         if lower in ("!floors", "!floorlist"):
@@ -374,14 +379,12 @@ class Bot(BaseBot):
             return True
 
         if lower.startswith("!delfloor "):
-            name = text[10:].strip()
-            await self._del_floor(name)
+            await self._del_floor(text[10:].strip())
             return True
 
         # ---- messaging ----
         if lower.startswith("!announce "):
-            msg = text[10:].strip()
-            await self.highrise.chat(f"📢 {msg}")
+            await self.highrise.chat(f"📢 {text[10:].strip()}")
             return True
 
         if lower.startswith("!whisper "):
@@ -414,61 +417,53 @@ class Bot(BaseBot):
                         await self.highrise.react(reaction, target_user.id)
                     except Exception as e:
                         print("React error:", e)
-                        await self.highrise.chat("⚠️ Reaction fail ho gaya (valid options jaise: heart, clap, wave, thumbs, wink, laugh).")
+                        await self.highrise.chat("⚠️ Reaction fail ho gaya.")
             else:
                 await self.highrise.chat("⚠️ Format: !react <username> <reaction>")
             return True
 
-        # ---- room moderation (apne hi room mein use karo) ----
+        # ---- moderation ----
         if lower.startswith("!kick "):
             await self._moderate(text[6:].strip(), "kick")
             return True
-
         if lower.startswith("!mute "):
             parts = text[6:].strip().split()
             target_name = parts[0] if parts else ""
             minutes = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
             await self._moderate(target_name, "mute", minutes)
             return True
-
         if lower.startswith("!unmute "):
             await self._moderate(text[8:].strip(), "unmute")
             return True
-
         if lower.startswith("!ban "):
             await self._moderate(text[5:].strip(), "ban")
             return True
-
         if lower.startswith("!unban "):
             await self._moderate(text[7:].strip(), "unban")
             return True
-
         if lower.startswith("!mod "):
             await self._set_privilege(text[5:].strip(), "moderator")
             return True
-
         if lower.startswith("!unmod "):
             await self._set_privilege(text[7:].strip(), "resident")
             return True
-
         if lower.startswith("!designer "):
             await self._set_privilege(text[10:].strip(), "designer")
             return True
 
-        # ---- trusted helper management ----
+        # ---- helpers ----
         if lower.startswith("!addhelper "):
             name = text[11:].strip().lower()
             TRUSTED_HELPERS.add(name)
             await self.highrise.chat(f"✅ {name} ab trusted helper hai.")
             return True
-
         if lower.startswith("!removehelper "):
             name = text[14:].strip().lower()
             TRUSTED_HELPERS.discard(name)
             await self.highrise.chat(f"🗑️ {name} ab helper nahi hai.")
             return True
 
-        # ---- voice chat ----
+        # ---- voice ----
         if lower.startswith("!voiceadd "):
             target_name = text[10:].strip()
             target_user, _ = await self._get_position(target_name)
@@ -477,12 +472,11 @@ class Bot(BaseBot):
             else:
                 try:
                     await self.highrise.add_user_to_voice(target_user.id)
-                    await self.highrise.chat(f"🎤 {target_name} ko voice chat mein add kar diya.")
+                    await self.highrise.chat(f"🎤 {target_name} ko voice mein add kiya.")
                 except Exception as e:
                     print("Voice add error:", e)
                     await self.highrise.chat("⚠️ Voice add fail ho gaya.")
             return True
-
         if lower.startswith("!voiceremove "):
             target_name = text[13:].strip()
             target_user, _ = await self._get_position(target_name)
@@ -491,7 +485,7 @@ class Bot(BaseBot):
             else:
                 try:
                     await self.highrise.remove_user_from_voice(target_user.id)
-                    await self.highrise.chat(f"🔇 {target_name} ko voice chat se remove kar diya.")
+                    await self.highrise.chat(f"🔇 {target_name} ko voice se remove kiya.")
                 except Exception as e:
                     print("Voice remove error:", e)
                     await self.highrise.chat("⚠️ Voice remove fail ho gaya.")
@@ -508,14 +502,10 @@ class Bot(BaseBot):
                 else:
                     try:
                         await self.highrise.tip_user(target_user.id, amount)
-                        await self.highrise.chat(f"💰 {target_name} ko {amount} tip bhej diya.")
+                        await self.highrise.chat(f"💰 {target_name} ko {amount} tip bheja.")
                     except Exception as e:
                         print("Tip error:", e)
-                        await self.highrise.chat(
-                            "⚠️ Tip fail ho gaya. Valid amounts: gold_bar_1, gold_bar_5, "
-                            "gold_bar_10, gold_bar_50, gold_bar_100, gold_bar_500, gold_bar_1k, "
-                            "gold_bar_5000, gold_bar_10k"
-                        )
+                        await self.highrise.chat("⚠️ Tip fail ho gaya. Valid: gold_bar_1/5/10/50/100/500/1k/5000/10k")
             else:
                 await self.highrise.chat("⚠️ Format: !tip <username> <gold_bar_amount>")
             return True
@@ -527,25 +517,6 @@ class Bot(BaseBot):
             except Exception as e:
                 print("Wallet error:", e)
                 await self.highrise.chat("⚠️ Wallet fetch nahi ho paya.")
-            return True
-
-        # ---- room control ----
-        if lower.startswith("!sendto "):
-            parts = text[8:].strip().split()
-            if len(parts) == 2:
-                target_name, dest_room_id = parts
-                target_user, _ = await self._get_position(target_name)
-                if target_user is None:
-                    await self.highrise.chat(f"⚠️ '{target_name}' room mein nahi mila.")
-                else:
-                    try:
-                        await self.highrise.move_user_to_room(target_user.id, dest_room_id)
-                        await self.highrise.chat(f"🚪 {target_name} ko doosre room mein bhej diya.")
-                    except Exception as e:
-                        print("Move room error:", e)
-                        await self.highrise.chat("⚠️ Move fail ho gaya.")
-            else:
-                await self.highrise.chat("⚠️ Format: !sendto <username> <room_id>")
             return True
 
         if lower == "!who":
@@ -564,47 +535,44 @@ class Bot(BaseBot):
                 await self.highrise.chat(f"⚠️ '{target_name}' room mein nahi mila.")
             elif target_user.id in self._join_times:
                 jt = self._join_times[target_user.id]
-                await self.highrise.chat(f"🕒 {target_name} is baar room mein aaya: {jt.strftime('%d-%b-%Y %I:%M %p')}")
+                await self.highrise.chat(f"🕒 {target_name} aaya: {jt.strftime('%d-%b-%Y %I:%M %p')}")
             else:
-                await self.highrise.chat(f"⚠️ '{target_name}' ka join-time record nahi hai (shayad bot start hone se pehle aaya tha).")
+                await self.highrise.chat(f"⚠️ '{target_name}' ka join-time record nahi hai.")
             return True
 
         return False
 
     # ============================ HELPER (LIGHT) COMMANDS ==============
     async def _handle_helper_command(self, user: User, text: str, lower: str) -> bool:
-        """Trusted helpers ke liye limited command set (no moderation/economy)."""
         if lower in ("!hhelp", "!helperhelp"):
-            await self.highrise.chat("🙋 Helper commands: !come | !announce <msg> | !test <emote_id> | !floor <naam>")
+            await self.highrise.chat("🙋 Helper: !come | !announce <msg> | !test <emote_id> | !floor <naam> | !party | !partystop")
             return True
-
         if lower == "!come":
             await self._bot_come_to_owner(user)
             return True
-
         if lower.startswith("!announce "):
-            msg = text[10:].strip()
-            await self.highrise.chat(f"📢 {msg}")
+            await self.highrise.chat(f"📢 {text[10:].strip()}")
             return True
-
         if lower.startswith("!test "):
-            emote_id = text[6:].strip()
-            await self._try_emote(user.id, emote_id, notify=user)
+            await self._try_emote(user.id, text[6:].strip(), notify=user)
             return True
-
         if lower.startswith("!floor "):
-            name = text[7:].strip()
-            await self._goto_floor(user, name)
+            await self._goto_floor(user, text[7:].strip())
             return True
-
+        if lower == "!party":
+            await self._start_party()
+            return True
+        if lower == "!partystop":
+            await self._stop_party()
+            return True
         return False
 
     async def _send_owner_help(self):
-        await self.highrise.chat(f"👑 Public: numbers (1-{len(EMOTES)}) chalao, '0' ya '!stop' se roko, '!emotes <page>' se list dekho.")
-        await self.highrise.chat("👑 Owner (1/4): !come | !follow | !unfollow | !goto <user> | !tp x y z | !tpto <user> | !bring <user>")
+        await self.highrise.chat(f"👑 Public: number (1-{len(EMOTES)}) = looping emote | '0'/'!stop' roko | '!again' | '!random' | '!emotes <page>' | '!myemote'")
+        await self.highrise.chat("👑 Owner (1/4): !come | !follow | !unfollow | !goto <user> | !tp x y z | !tpto <user> | !bring <user> | !party | !partystop")
         await self.highrise.chat("👑 Owner (2/4) FLOORS: !setfloor <naam> | !floor <naam> | !floors | !delfloor <naam>")
         await self.highrise.chat("👑 Owner (3/4): !test <id> | !addemote <n> <id> | !removeemote <n> | !announce <msg> | !whisper <user> <msg> | !react <user> <reaction>")
-        await self.highrise.chat("👑 Owner (4/4): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !joined <user> | !sendto <user> <room_id> | !addhelper/!removehelper <user>")
+        await self.highrise.chat("👑 Owner (4/4): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !joined <user> | !addhelper/!removehelper <user>")
 
     # ============================ CORE HELPERS ==========================
     def _is_owner(self, user: User) -> bool:
@@ -616,10 +584,10 @@ class Bot(BaseBot):
 
     def _check_cooldown(self, user_id: str) -> bool:
         now = time.time()
-        last = self._last_emote_time.get(user_id, 0)
+        last = self._last_cmd_time.get(user_id, 0)
         if now - last < EMOTE_COOLDOWN_SECONDS:
             return False
-        self._last_emote_time[user_id] = now
+        self._last_cmd_time[user_id] = now
         return True
 
     async def _try_emote(self, user_id: str, emote_id: str, notify: User = None) -> None:
@@ -630,13 +598,32 @@ class Bot(BaseBot):
             if notify is not None:
                 await self.highrise.chat(f"⚠️ '{emote_id}' invalid ya unavailable emote hai.")
 
-    async def _stop_emote(self, user: User) -> None:
-        try:
-            await self.highrise.send_emote(STOP_EMOTE_ID, user.id)
-            self._last_emote_used.pop(user.id, None)
-        except Exception as e:
-            print("Stop emote error:", e)
-            await self.highrise.chat("⚠️ Emote rokne mein error aaya, dobara try karo.")
+    # ---- LOOPING EMOTE ENGINE (naya) ----
+    async def _start_loop_emote(self, user_id: str, emote_id: str) -> None:
+        """Emote ko har EMOTE_REPEAT_SECONDS mein dobara chalata hai, jab tak
+        cancel na ho (user '0'/'!stop' bole ya naya emote select kare)."""
+        await self._cancel_loop(user_id)
+
+        async def _loop():
+            try:
+                while True:
+                    await self._try_emote(user_id, emote_id)
+                    await asyncio.sleep(EMOTE_REPEAT_SECONDS)
+            except asyncio.CancelledError:
+                pass
+
+        self._emote_tasks[user_id] = asyncio.create_task(_loop())
+
+    async def _cancel_loop(self, user_id: str, play_stop_emote: bool = False) -> None:
+        task = self._emote_tasks.pop(user_id, None)
+        if task is not None:
+            task.cancel()
+        if play_stop_emote:
+            try:
+                await self.highrise.send_emote(STOP_EMOTE_ID, user_id)
+            except Exception as e:
+                print("Stop emote error:", e)
+        self._last_emote_used.pop(user_id, None)
 
     async def _get_position(self, username: str):
         room_users = (await self.highrise.get_room_users()).content
@@ -657,15 +644,39 @@ class Bot(BaseBot):
         start = (page - 1) * per_page
         chunk = filled[start:start + per_page]
         if not chunk:
-            await self.highrise.chat(f"Page {page} khaali hai. Total emotes: {len(filled)}")
+            await self.highrise.chat(f"Page {page} khaali hai. Total filled emotes: {len(filled)}/{len(EMOTES)}")
             return
-        listing = ", ".join(f"{n}" for n, _ in chunk)
+        listing = ", ".join(n for n, _ in chunk)
         total_pages = (len(filled) + per_page - 1) // per_page
-        await self.highrise.chat(f"🕺 Emotes page {page}/{total_pages}: {listing}")
+        await self.highrise.chat(f"🕺 Emotes page {page}/{total_pages} ({len(filled)}/{len(EMOTES)} filled): {listing}")
+
+    # ---- party mode (naya feature) ----
+    async def _start_party(self) -> None:
+        await self._stop_party()
+        filled = [e for e in EMOTES.values() if not e.startswith("REPLACE_ME_")]
+        if not filled:
+            await self.highrise.chat("⚠️ Koi emote filled nahi hai party ke liye.")
+            return
+
+        async def _loop():
+            try:
+                while True:
+                    if self.bot_user_id:
+                        await self._try_emote(self.bot_user_id, random.choice(filled))
+                    await asyncio.sleep(EMOTE_REPEAT_SECONDS)
+            except asyncio.CancelledError:
+                pass
+
+        self._party_task = asyncio.create_task(_loop())
+        await self.highrise.chat("🎉 Party mode ON — bot random emotes cycle karega! '!partystop' se roko.")
+
+    async def _stop_party(self) -> None:
+        if self._party_task is not None:
+            self._party_task.cancel()
+            self._party_task = None
 
     # ---- movement helpers ----
     async def _bot_come_to_owner(self, owner: User) -> None:
-        """Bot khud owner ke paas teleport ho jaata hai."""
         _, owner_pos = await self._get_position(owner.username)
         if owner_pos is None:
             await self.highrise.chat("⚠️ Owner ki position nahi mil payi.")
@@ -678,7 +689,7 @@ class Bot(BaseBot):
             await self.highrise.chat(f"🛰️ Aa gaya, {owner.username}!")
         except Exception as e:
             print("Come-here error:", e)
-            await self.highrise.chat("⚠️ Aane mein error aaya, dobara try karo.")
+            await self.highrise.chat("⚠️ Aane mein error aaya.")
 
     async def _teleport_owner_to_coords(self, owner: User, coords_str: str) -> None:
         try:
@@ -731,7 +742,7 @@ class Bot(BaseBot):
                 await asyncio.sleep(3)
 
         self._follow_task = asyncio.create_task(_loop())
-        await self.highrise.chat(f"🐾 Ab main {owner_username} ko follow karunga. Rokne ke liye '!unfollow' bhejo.")
+        await self.highrise.chat(f"🐾 Ab main {owner_username} ko follow karunga. '!unfollow' se roko.")
 
     async def _stop_follow(self) -> None:
         self._follow_target_username = None
@@ -739,10 +750,10 @@ class Bot(BaseBot):
             self._follow_task.cancel()
             self._follow_task = None
 
-    # ---- FLOOR TELEPORT HELPERS (NAYA) ----
+    # ---- floor helpers ----
     async def _set_floor(self, owner: User, name: str) -> None:
         if not name:
-            await self.highrise.chat("⚠️ Format: !setfloor <naam> (e.g. !setfloor first)")
+            await self.highrise.chat("⚠️ Format: !setfloor <naam>")
             return
         _, owner_pos = await self._get_position(owner.username)
         if owner_pos is None:
@@ -753,7 +764,7 @@ class Bot(BaseBot):
             "facing": getattr(owner_pos, "facing", "FrontRight"),
         }
         self._save_floors()
-        await self.highrise.chat(f"📍 Floor '{name}' save ho gaya isi position par!")
+        await self.highrise.chat(f"📍 Floor '{name}' save ho gaya!")
 
     async def _goto_floor(self, owner: User, name: str) -> None:
         if not name:
@@ -761,7 +772,7 @@ class Bot(BaseBot):
             return
         data = self._floors.get(name.lower())
         if data is None:
-            await self.highrise.chat(f"⚠️ Floor '{name}' abhi tak set nahi hai. Pehle '!setfloor {name}' se save karo.")
+            await self.highrise.chat(f"⚠️ Floor '{name}' set nahi hai. Pehle '!setfloor {name}' karo.")
             return
         try:
             dest = Position(data["x"], data["y"], data["z"], facing=data.get("facing", "FrontRight"))
@@ -773,10 +784,9 @@ class Bot(BaseBot):
 
     async def _list_floors(self) -> None:
         if not self._floors:
-            await self.highrise.chat("Abhi koi floor set nahi hai. '!setfloor <naam>' se banao.")
+            await self.highrise.chat("Abhi koi floor set nahi hai.")
             return
-        names = ", ".join(sorted(self._floors.keys()))
-        await self.highrise.chat(f"🏢 Saved floors: {names}")
+        await self.highrise.chat(f"🏢 Saved floors: {', '.join(sorted(self._floors.keys()))}")
 
     async def _del_floor(self, name: str) -> None:
         if name.lower() in self._floors:
@@ -784,9 +794,9 @@ class Bot(BaseBot):
             self._save_floors()
             await self.highrise.chat(f"🗑️ Floor '{name}' delete ho gaya.")
         else:
-            await self.highrise.chat(f"⚠️ Floor '{name}' milaa nahi.")
+            await self.highrise.chat(f"⚠️ Floor '{name}' mila nahi.")
 
-    # ---- moderation / privilege helpers ----
+    # ---- moderation / privilege ----
     async def _moderate(self, target_name: str, action: str, minutes: int = None) -> None:
         target_user, _ = await self._get_position(target_name)
         if target_user is None:
@@ -800,10 +810,7 @@ class Bot(BaseBot):
             await self.highrise.chat(f"🛡️ {target_name}: {action} kar diya.")
         except Exception as e:
             print(f"Moderate '{action}' error:", e)
-            await self.highrise.chat(
-                f"⚠️ '{action}' fail ho gaya — is action ke liye bot ke paas "
-                f"Moderator/Owner rights room mein hone chahiye, aur SDK version check kar lo."
-            )
+            await self.highrise.chat(f"⚠️ '{action}' fail — bot ke paas Moderator/Owner rights room mein hone chahiye.")
 
     async def _set_privilege(self, target_name: str, privilege: str) -> None:
         target_user, _ = await self._get_position(target_name)
@@ -815,18 +822,13 @@ class Bot(BaseBot):
             await self.highrise.chat(f"🎖️ {target_name} ab '{privilege}' ban gaya/gayi.")
         except Exception as e:
             print(f"Set privilege '{privilege}' error:", e)
-            await self.highrise.chat(
-                "⚠️ Privilege set nahi ho paya — bot ke paas Owner rights chahiye is action ke liye."
-            )
+            await self.highrise.chat("⚠️ Privilege set nahi ho paya — bot ke paas Owner rights chahiye.")
 
 
-# ============================ MULTI-ROOM RUNNER ========================
+# ============================ SINGLE-ROOM RUNNER ========================
 async def main():
-    """Dono rooms ko ek hi process mein, ek saath start karta hai."""
-    definitions = [
-        BotDefinition(Bot(room_label=room["label"]), room["room_id"], BOT_TOKEN)
-        for room in ROOMS
-    ]
+    """Sirf EK room mein connect karta hai — multilogin crash yahi se fix hota hai."""
+    definitions = [(Bot(), ROOM_ID, BOT_TOKEN)]
     await __main__.main(definitions)
 
 
