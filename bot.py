@@ -17,8 +17,8 @@ Aapke diye hue links:
 6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
 6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160&...
 
-  -> "id="        = bot/world ka ID   (64dc75dbf71c6ae119bffa47)
-  -> "ownedRoomId="  = ASLI ROOM ID (63fcc70dfb16e9c663269160)
+  -> "id="        = bot/world ka ID   (6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47)
+  -> "ownedRoomId="  = ASLI ROOM ID (6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160)
 
 --------------------------------------------------------------------
 RENDER PAR DEPLOY KARNE KA TAREEKA:
