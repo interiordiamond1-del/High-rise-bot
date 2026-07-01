@@ -4,50 +4,52 @@
 ====================================================================
 
 --------------------------------------------------------------------
-YEH KYA FIX HUA HAI:
+IS VERSION MEIN KYA FIX/UPDATE HUA HAI:
 --------------------------------------------------------------------
-1) CRASH FIX ("Multilogin closing connection..." -> Application exited early)
-   Root cause: pehle wala code SAME bot token se DO rooms mein EK
-   saath connect kar raha tha. Highrise sirf EK active session per
-   bot allow karta hai — dusra connection aate hi purana session
-   "Multilogin" bolke band kar deta hai, aur dono connections gir
-   jaate hain -> app crash.
-   FIX: Ab bot sirf EK room mein connect hota hai. Naya room ID
-   (ownedRoomId) is link se liya gaya hai:
-   https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160
-   -> ROOM_ID = "63fcc70dfb16e9c663269160"
+1) CRASH FIX (asli reason bot "online" nahi ho raha tha)
+   Log mein clearly likha tha:
+       NameError: name 'highrise' is not defined
+       File "bot.py", line 833, in main
+       await highrise.run(definitions)
+   Root cause: file ke top par sirf
+       from highrise import BaseBot, User
+   import tha — lekin code neeche `highrise.run(...)` bhi call kar
+   raha tha, jiske liye pura `highrise` module (top-level package)
+   import hona zaroori hai. Isi wajah se bot start hote hi crash ho
+   raha tha aur Render use baar-baar restart kar raha tha — isiliye
+   room mein bot "online" nahi dikh raha tha.
+   FIX: `import highrise` add kar diya top par.
 
-2) EMOTE LOOP FIX
-   Pehle number bhejne par emote SIRF EK BAAR chalta tha (Highrise
-   emotes non-looping hote hain by default). Ab jab koi number
-   bhejta hai, bot background mein us emote ko HAR FEW SECONDS mein
-   dobara-dobara chalata rehta hai — jab tak woh user "0" ya
-   "!stop" na bole. Naya number bhejne par purana loop apne aap
-   band ho jaata hai aur naya start hota hai.
+2) DM (private message) auto-reply
+   Pehle on_message() sirf console mein print karta tha, user ko
+   koi reply nahi jaata tha. Ab jab koi bot ko naya DM bhejta hai,
+   bot us conversation mein ek welcome/help reply bhejta hai
+   (self.highrise.send_message se). Isse "kisi ko bhi DM mein
+   acche se reply" wala part solve hota hai.
 
-3) EMOTES 50 -> 250 SLOTS
-   Dictionary ab 250 numbers support karta hai. Maine sirf wahi
-   IDs bhare hain jo maine verify kiye hain (pehle wale 50 + kuch
-   thoda extra jo Highrise SDK docs mein confirmed hain). Baaki
-   slots khaali (REPLACE_ME) hain kyunki mujhe unke real emote-id
-   strings verified nahi mile — fake ID daalne se woh chup-chaap
-   fail ho jaata (koi crash nahi, bas kaam nahi karega). In khaali
-   slots ko bharne ke liye:
-       !addemote <number> <real_emote_id>
-   Real IDs kahan se milenge:
-     - Highrise Studio -> Outfit Editor -> Emote Editor (ID dikhata hai)
-     - Highrise Create community "Code Snippets" page
+3) Emote start/stop par chat confirmation
+   Ab jab koi number bhejta hai aur uska loop emote start/stop hota
+   hai, bot world chat mein ek chhota confirmation message bhejta
+   hai (kisne konsa emote start/stop kiya) — sirf silently emote
+   chalane ke bajaye.
 
 --------------------------------------------------------------------
-NAYE FEATURES (2026-style additions):
+"ONLINE 24/7" WALA ISSUE — ZAROORI JAANKARI:
 --------------------------------------------------------------------
-  - Looping emotes (jab tak stop na bolo)              [PUBLIC]
-  - "!random" -> ek random filled emote chalata hai      [PUBLIC]
-  - "!party" (owner/helper) -> pura room cycle-emote mode [OWNER/HELPER]
-  - "!myemote" -> tumhara current chal raha emote batata hai [PUBLIC]
-  - Per-user emote history + last-used quick repeat "!again" [PUBLIC]
-  - Sab floors + emote-loop state JSON mein persist hota hai
-    (bot restart hone par bhi yaad rehta hai)
+Iss crash ko fix karne se bot ab crash-loop nahi karega, jo abhi tak
+ka sabse bada "online nahi aa raha" wajah tha. Lekin agar Render ke
+FREE plan par chala rahe ho, to free web services/background workers
+kuch der inactivity ke baad "sleep" ho sakte hain — Highrise ki apni
+official docs bhi kehti hain: agar bot ko room mein 24/7 chahiye to
+hosting service dedicated/paid plan par rakhna padta hai (PC band
+karne par bhi bot band ho jaata hai). Iske liye:
+   - Render Dashboard -> apni service -> Settings -> Instance Type
+     ko "Starter" (paid) plan par upgrade karo taaki woh kabhi sleep
+     na ho / crash hone par turant restart ho.
+   - Free plan use kar rahe ho to kam se kam ek "health check" route
+     ya uptime-ping service (jaise UptimeRobot) laga sakte ho, lekin
+     background worker type services ke liye woh guarantee nahi
+     karta — paid plan hi reliable 24/7 ke liye best hai.
 
 --------------------------------------------------------------------
 RENDER DEPLOY:
@@ -68,6 +70,7 @@ import random
 import time
 from datetime import datetime
 
+import highrise
 from highrise import BaseBot, User
 from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
@@ -94,6 +97,16 @@ STOP_EMOTE_ID = "emote-wave"
 
 DATA_DIR = "./bot_data"
 FLOOR_FILE = os.path.join(DATA_DIR, "floors.json")
+
+DM_WELCOME_MESSAGE = (
+    "👋 Hi! Main {bot} hoon. Room mein jaake number (1 se 250) bhejo "
+    "koi bhi emote LOOP mein chalane ke liye — rokne ke liye '0' ya "
+    "'!stop' bhejo. Commands ke liye room chat mein '!help' likho."
+)
+DM_FALLBACK_MESSAGE = (
+    "Main abhi sirf room ke commands samajhta hoon 🙂 Room mein aakar "
+    "'!help' bhejo poori list dekhne ke liye."
+)
 
 
 # ============================ EMOTES (1-250) =========================
@@ -165,11 +178,13 @@ class Bot(BaseBot):
         self._last_cmd_time = {}        # user_id -> timestamp (cooldown)
         self._emote_tasks = {}          # user_id -> asyncio.Task (looping emote)
         self._last_emote_used = {}      # user_id -> emote_id
+        self._emote_number_used = {}    # user_id -> number string (for chat msgs)
         self._join_times = {}           # user_id -> datetime
         self._follow_target_username = None
         self._follow_task = None
         self._party_task = None
         self._floors = {}
+        self._greeted_conversations = set()   # conversation_id already greeted
 
     # ------------------------- persistence -----------------------
     def _load_floors(self):
@@ -222,8 +237,21 @@ class Bot(BaseBot):
     async def on_moderate(self, moderator_id, target_user_id, moderate_type, action_length=None) -> None:
         print(f"Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
 
+    # ---- DM (private message) handling — ab bot reply karta hai ----
     async def on_message(self, user_id, conversation_id, is_new_conversation) -> None:
         print(f"DM received from {user_id} in {conversation_id} (new={is_new_conversation})")
+        try:
+            if is_new_conversation or conversation_id not in self._greeted_conversations:
+                self._greeted_conversations.add(conversation_id)
+                await self.highrise.send_message(
+                    conversation_id,
+                    DM_WELCOME_MESSAGE.format(bot=BOT_NAME),
+                    "text",
+                )
+            else:
+                await self.highrise.send_message(conversation_id, DM_FALLBACK_MESSAGE, "text")
+        except Exception as e:
+            print("DM reply error:", e)
 
     # ------------------------- main chat handler ----------------------
     async def on_chat(self, user: User, message: str) -> None:
@@ -242,7 +270,7 @@ class Bot(BaseBot):
 
         # ---------- Public: stop apna loop ----------
         if text == "0" or lower in ("!stop", "stop"):
-            await self._cancel_loop(user.id, play_stop_emote=True)
+            await self._cancel_loop(user.id, play_stop_emote=True, announce=user)
             return
 
         # ---------- Public: numbered emotes -> LOOP until stop ----------
@@ -253,7 +281,7 @@ class Bot(BaseBot):
                 return
             if not self._check_cooldown(user.id):
                 return
-            await self._start_loop_emote(user.id, emote_id)
+            await self._start_loop_emote(user.id, emote_id, announce=user, number=text)
             self._last_emote_used[user.id] = emote_id
             return
 
@@ -262,14 +290,14 @@ class Bot(BaseBot):
             if emote_id is None:
                 await self.highrise.chat("⚠️ Tumne abhi tak koi emote use nahi kiya.")
             else:
-                await self._start_loop_emote(user.id, emote_id)
+                await self._start_loop_emote(user.id, emote_id, announce=user)
             return
 
         if lower == "!random":
             filled = [e for e in EMOTES.values() if not e.startswith("REPLACE_ME_")]
             if filled:
                 emote_id = random.choice(filled)
-                await self._start_loop_emote(user.id, emote_id)
+                await self._start_loop_emote(user.id, emote_id, announce=user)
                 self._last_emote_used[user.id] = emote_id
             return
 
@@ -599,10 +627,11 @@ class Bot(BaseBot):
             if notify is not None:
                 await self.highrise.chat(f"⚠️ '{emote_id}' invalid ya unavailable emote hai.")
 
-    # ---- LOOPING EMOTE ENGINE (naya) ----
-    async def _start_loop_emote(self, user_id: str, emote_id: str) -> None:
+    # ---- LOOPING EMOTE ENGINE ----
+    async def _start_loop_emote(self, user_id: str, emote_id: str, announce: User = None, number: str = None) -> None:
         """Emote ko har EMOTE_REPEAT_SECONDS mein dobara chalata hai, jab tak
-        cancel na ho (user '0'/'!stop' bole ya naya emote select kare)."""
+        cancel na ho (user '0'/'!stop' bole ya naya emote select kare).
+        `announce` diya ho to bot world chat mein confirmation bhejta hai."""
         await self._cancel_loop(user_id)
 
         async def _loop():
@@ -614,9 +643,19 @@ class Bot(BaseBot):
                 pass
 
         self._emote_tasks[user_id] = asyncio.create_task(_loop())
+        if number:
+            self._emote_number_used[user_id] = number
 
-    async def _cancel_loop(self, user_id: str, play_stop_emote: bool = False) -> None:
+        if announce is not None:
+            label = f"#{number}" if number else emote_id
+            try:
+                await self.highrise.chat(f"🕺 {announce.username} ne emote {label} start kiya (loop) — rokne ke liye '0' bhejo.")
+            except Exception as e:
+                print("Announce error:", e)
+
+    async def _cancel_loop(self, user_id: str, play_stop_emote: bool = False, announce: User = None) -> None:
         task = self._emote_tasks.pop(user_id, None)
+        had_loop = task is not None
         if task is not None:
             task.cancel()
         if play_stop_emote:
@@ -625,6 +664,12 @@ class Bot(BaseBot):
             except Exception as e:
                 print("Stop emote error:", e)
         self._last_emote_used.pop(user_id, None)
+        self._emote_number_used.pop(user_id, None)
+        if announce is not None and had_loop:
+            try:
+                await self.highrise.chat(f"⏹️ {announce.username} ka emote loop band ho gaya.")
+            except Exception as e:
+                print("Announce error:", e)
 
     async def _get_position(self, username: str):
         room_users = (await self.highrise.get_room_users()).content
@@ -651,7 +696,7 @@ class Bot(BaseBot):
         total_pages = (len(filled) + per_page - 1) // per_page
         await self.highrise.chat(f"🕺 Emotes page {page}/{total_pages} ({len(filled)}/{len(EMOTES)} filled): {listing}")
 
-    # ---- party mode (naya feature) ----
+    # ---- party mode ----
     async def _start_party(self) -> None:
         await self._stop_party()
         filled = [e for e in EMOTES.values() if not e.startswith("REPLACE_ME_")]
