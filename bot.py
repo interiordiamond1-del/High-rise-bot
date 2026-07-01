@@ -15,10 +15,9 @@ aapka BOT ka apna ID hai, koi room ID nahi. Isiliye Highrise
 
 Aapke diye hue links:
 6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
-6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160&...
 
   -> "id="        = bot/world ka ID   (64dc75dbf71c6ae119bffa47)
-  -> "ownedRoomId="  = ASLI ROOM ID (63fcc70dfb16e9c663269160)
+  -> "ownedRoomId="  = ASLI ROOM ID ()
 
 --------------------------------------------------------------------
 RENDER PAR DEPLOY KARNE KA TAREEKA:
@@ -81,7 +80,7 @@ BOT_TOKEN = "c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a"
 # Do rooms — same bot token, alag room IDs (ownedRoomId waale)
 ROOMS = [
     {"label": "Room-1", "room_id": "64dc75dbf71c6ae119bffa47"},
-    {"label": "Room-2", "room_id": "63fcc70dfb16e9c663269160"},
+    {"label": "Room-2", "room_id": ""},
 ]
 
 OWNER_USERNAME = "LANAX4"
