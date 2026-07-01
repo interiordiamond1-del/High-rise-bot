@@ -85,7 +85,7 @@ ROOMS = [
 ]
 
 OWNER_USERNAME = "LANAX4"
-OWNER_USER_ID = ""   # agar exact User ID pata ho toh yahan daal do (zyada reliable)
+OWNER_USER_ID = "lanax4"   # agar exact User ID pata ho toh yahan daal do (zyada reliable)
 
 # Owner apne aur logon ko bhi "trusted helper" bana sakta hai jinke paas
 # limited owner-jaisi command access ho (emote-moderation jaisi cheezein
