@@ -1,19 +1,42 @@
 """
 ====================================================================
-  LANAX.4 — Highrise All-in-One Bot  (UPGRADED, single file, direct-run)
+  LANAX.4 — Highrise All-in-One Bot  (MULTI-ROOM + FLOOR-TELEPORT)
 ====================================================================
-Yeh EK hi file hai — config, emotes list (1-200+), owner commands,
-moderation, voice, wallet, follow-mode — sab ek jagah.
+Ye bot ab EK SAATH 2 rooms mein chal sakta hai (same bot account,
+alag-alag rooms), aur owner "floors" set/teleport kar sakta hai
+(jaise: first floor, second floor, top floor — jo bhi naam do).
 
-RUN KARNE KA TAREEKA:
-  1) pip install highrise-bot-sdk
-  2) Terminal mein (file jis folder mein hai wahan se):
-       highrise bot:Bot 6894bd39e3e4a405517cb530 c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a
-     (yeh command run_instructions() function mein bhi mil jaayegi)
+--------------------------------------------------------------------
+IMPORTANT FIX (pehle wali "Room not found" error):
+--------------------------------------------------------------------
+Pehle ROOM_ID = "6894bd39e3e4a405517cb530" set tha — lekin ye
+aapka BOT ka apna ID hai, koi room ID nahi. Isiliye Highrise
+"Room not found" error deta raha.
 
-  NOTE: BOT_ID upar diya gaya hai sirf reference ke liye — CLI command
-  mein sirf ROOM_ID aur BOT_TOKEN chahiye hote hain (jaisa upar hai).
+Aapke diye hue links:
+  https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=64dc75dbf71c6ae119bffa47&...
+  https://high.rs/world?id=6894bd39e3e4a405517cb530&ownedRoomId=63fcc70dfb16e9c663269160&...
 
+  -> "id="        = bot/world ka ID   (ROOM ID NAHI HAI)
+  -> "ownedRoomId="  = ASLI ROOM ID (yehi neeche ROOMS list mein daala hai)
+
+--------------------------------------------------------------------
+RENDER PAR DEPLOY KARNE KA TAREEKA:
+--------------------------------------------------------------------
+1) requirements.txt mein sirf yeh rakho (neeche wali file dekho):
+       highrise-bot-sdk==25.1.0
+
+2) Render Dashboard -> Environment -> Environment Variables mein add karo:
+       PYTHON_VERSION = 3.11.9
+   (pendulum/wheel build fail isi wajah se ho raha tha — naya Python
+   version SDK ki dependencies ke saath match nahi kar raha tha)
+
+3) Render "Start Command" ko is se badal do:
+       python bot.py
+   (highrise CLI command ab NAHI chalega kyunki ab hum 2 rooms ek
+   saath ek hi Python process mein khud start kar rahe hain)
+
+--------------------------------------------------------------------
 PUBLIC (koi bhi room mein use kar sakta hai):
   - Chat mein sirf NUMBER bhejo (1 se 300 tak) -> apna emote chalega
   - "0" ya "!stop"       -> apna chal raha emote turant ROK do
@@ -21,22 +44,45 @@ PUBLIC (koi bhi room mein use kar sakta hai):
   - "!emotes <page>"     -> emote list page-wise dikhata hai (10 per page)
 
 OWNER-ONLY COMMANDS (sirf LANAX4 / OWNER_USER_ID use kar sakta hai)
-  Poori list neeche "OWNER COMMAND REFERENCE" section mein hai.
+  Poori list "!owner" chat karke bhi mil jaayegi in-game.
+
+  MOVEMENT / FLOOR TELEPORT (NAYA):
+    !come                 -> Bot khud tumhare paas teleport ho jaata hai
+    !setfloor <naam>       -> Tumhari abhi ki position ko "<naam>" floor
+                               ke naam se save kar deta hai
+                               (e.g. !setfloor first, !setfloor second,
+                                !setfloor top)
+    !floor <naam>          -> Tum us saved floor par turant teleport ho jaate ho
+    !floors                -> Saare saved floor naam dikhata hai
+    !delfloor <naam>        -> Ek saved floor delete karta hai
+    !tp x y z              -> Raw coordinates par teleport
+    !tpto <user>           -> Kisi user ke paas teleport
+    !bring <user>           -> Kisi user ko apne paas la do
+    !goto <user>            -> Bot khud kisi user ke paas walk karta hai
+    !follow / !unfollow    -> Bot tumhe follow karna start/stop kare
 ====================================================================
 """
 
 import asyncio
+import json
+import os
 import time
 from datetime import datetime
-from highrise import BaseBot, User
+
+from highrise import BaseBot, User, __main__
+from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
 
 
 # ============================ CONFIG ================================
-BOT_ID = "64c7eaf17edb7408f211e21e"
 BOT_NAME = "LANAX.4"
 BOT_TOKEN = "c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a"
-ROOM_ID = "6894bd39e3e4a405517cb530"
+
+# Do rooms — same bot token, alag room IDs (ownedRoomId waale)
+ROOMS = [
+    {"label": "Room-1", "room_id": "64dc75dbf71c6ae119bffa47"},
+    {"label": "Room-2", "room_id": "63fcc70dfb16e9c663269160"},
+]
 
 OWNER_USERNAME = "LANAX4"
 OWNER_USER_ID = ""   # agar exact User ID pata ho toh yahan daal do (zyada reliable)
@@ -59,19 +105,12 @@ WELCOME_MESSAGE_ENABLED = True
 # khada (idle) kar deta hai. Neeche wala ID change kiya ja sakta hai.
 STOP_EMOTE_ID = "emote-wave"
 
-
-def run_instructions():
-    print(f"highrise bot:Bot {ROOM_ID} {BOT_TOKEN}")
+# Floor positions ab har room ke liye alag JSON file mein save hongi
+# (taaki restart hone par bhi floors yaad rahein)
+FLOORS_DIR = "./floor_data"
 
 
 # ============================ EMOTES (1-200) =========================
-# 1-50: commonly known / likely-valid emote IDs — inko bhi ek baar
-#       "!test <id>" se verify kar lena best practice hai, kyunki
-#       Highrise apni poori emote-ID list officially publish NAHI karta.
-# 51-200: abhi PLACEHOLDER hain ("REPLACE_ME_51" jaisa). Jaise-jaise tum
-#       "!test" se naye valid emote_id dhoondte jao, "!addemote <n> <id>"
-#       command se turant EMOTES dictionary mein add kar sakte ho —
-#       code edit karne ki zaroorat nahi, bot restart bhi nahi chahiye.
 EMOTES = {
     "1": "emote-hello",
     "2": "emote-wave",
@@ -132,19 +171,52 @@ for _n in range(51, 301):
 
 # ============================ BOT LOGIC ==============================
 class Bot(BaseBot):
-    def __init__(self):
+    def __init__(self, room_label: str = "Room"):
         super().__init__()
+        self.room_label = room_label
+        self.room_id = None
         self.bot_user_id = None
         self._last_emote_time = {}      # user_id -> timestamp (cooldown)
         self._last_emote_used = {}      # user_id -> emote_id (last emote they played)
         self._join_times = {}           # user_id -> datetime jab woh room mein aaya
         self._follow_target_username = None
         self._follow_task = None
+        self._floors = {}               # floor_name -> {x,y,z,facing}
+        self._floor_file = None
+
+    # ------------------------- floor persistence -----------------------
+    def _load_floors(self):
+        if not self._floor_file:
+            return
+        try:
+            if os.path.exists(self._floor_file):
+                with open(self._floor_file, "r") as f:
+                    self._floors = json.load(f)
+        except Exception as e:
+            print("Floor load error:", e)
+            self._floors = {}
+
+    def _save_floors(self):
+        if not self._floor_file:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._floor_file), exist_ok=True)
+            with open(self._floor_file, "w") as f:
+                json.dump(self._floors, f)
+        except Exception as e:
+            print("Floor save error:", e)
 
     # ------------------------- lifecycle -----------------------------
     async def on_start(self, session_metadata: SessionMetadata) -> None:
         self.bot_user_id = session_metadata.user_id
-        print(f"✅ {BOT_NAME} room mein connect ho gaya! bot_user_id = {self.bot_user_id}")
+        try:
+            self.room_id = session_metadata.room_info.room_id
+        except Exception:
+            self.room_id = None
+        os.makedirs(FLOORS_DIR, exist_ok=True)
+        self._floor_file = os.path.join(FLOORS_DIR, f"{self.room_label}.json")
+        self._load_floors()
+        print(f"✅ {BOT_NAME} [{self.room_label}] connect ho gaya! bot_user_id = {self.bot_user_id}")
         try:
             await self.highrise.chat(
                 f"🤖 {BOT_NAME} online hai! Chat mein number bhejo (1-{len(EMOTES)}) "
@@ -158,7 +230,7 @@ class Bot(BaseBot):
         join_time = datetime.now()
         self._join_times[user.id] = join_time
         time_str = join_time.strftime("%d-%b-%Y %I:%M %p")
-        print(f"➡️ {user.username} room mein aaya: {time_str}")
+        print(f"➡️ [{self.room_label}] {user.username} room mein aaya: {time_str}")
         if not WELCOME_MESSAGE_ENABLED:
             return
         try:
@@ -167,12 +239,10 @@ class Bot(BaseBot):
             print("Welcome message error:", e)
 
     async def on_moderate(self, moderator_id: str, target_user_id: str, moderate_type, action_length=None) -> None:
-        # Trigger hota hai jab koi room ko moderate karta hai (kick/mute/ban etc.)
-        print(f"Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
+        print(f"[{self.room_label}] Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
 
     async def on_message(self, user_id: str, conversation_id: str, is_new_conversation: bool) -> None:
-        # Bot ko private/DM message aaya hai (game ke inbox mein)
-        print(f"DM received from {user_id} in conversation {conversation_id} (new={is_new_conversation})")
+        print(f"[{self.room_label}] DM received from {user_id} in conversation {conversation_id} (new={is_new_conversation})")
 
     # ------------------------- main chat handler ----------------------
     async def on_chat(self, user: User, message: str) -> None:
@@ -272,7 +342,6 @@ class Bot(BaseBot):
             return True
 
         if lower.startswith("!goto "):
-            # Bot khud kisi user ke paas walk karta hai (teleport nahi)
             target_name = text[6:].strip()
             _, pos = await self._get_position(target_name)
             if pos is None:
@@ -288,6 +357,26 @@ class Bot(BaseBot):
 
         if lower == "!unfollow":
             await self._stop_follow()
+            return True
+
+        # ---- FLOOR TELEPORT (NAYA) ----
+        if lower.startswith("!setfloor "):
+            name = text[10:].strip()
+            await self._set_floor(user, name)
+            return True
+
+        if lower.startswith("!floor "):
+            name = text[7:].strip()
+            await self._goto_floor(user, name)
+            return True
+
+        if lower in ("!floors", "!floorlist"):
+            await self._list_floors()
+            return True
+
+        if lower.startswith("!delfloor "):
+            name = text[10:].strip()
+            await self._del_floor(name)
             return True
 
         # ---- messaging ----
@@ -316,9 +405,6 @@ class Bot(BaseBot):
 
         if lower.startswith("!react "):
             parts = text[7:].strip().split(maxsplit=1)
-            if len(parts) == 2:
-                reaction, target_name = parts[1], parts[0]
-                # allow "!react <username> <reaction>" style too
             if len(parts) == 2:
                 target_name, reaction = parts
                 target_user, _ = await self._get_position(target_name)
@@ -446,7 +532,6 @@ class Bot(BaseBot):
 
         # ---- room control ----
         if lower.startswith("!sendto "):
-            # room ke ek user ko doosre room mein bhej do
             parts = text[8:].strip().split()
             if len(parts) == 2:
                 target_name, dest_room_id = parts
@@ -491,7 +576,7 @@ class Bot(BaseBot):
     async def _handle_helper_command(self, user: User, text: str, lower: str) -> bool:
         """Trusted helpers ke liye limited command set (no moderation/economy)."""
         if lower in ("!hhelp", "!helperhelp"):
-            await self.highrise.chat("🙋 Helper commands: !come | !announce <msg> | !test <emote_id>")
+            await self.highrise.chat("🙋 Helper commands: !come | !announce <msg> | !test <emote_id> | !floor <naam>")
             return True
 
         if lower == "!come":
@@ -508,13 +593,19 @@ class Bot(BaseBot):
             await self._try_emote(user.id, emote_id, notify=user)
             return True
 
+        if lower.startswith("!floor "):
+            name = text[7:].strip()
+            await self._goto_floor(user, name)
+            return True
+
         return False
 
     async def _send_owner_help(self):
         await self.highrise.chat(f"👑 Public: numbers (1-{len(EMOTES)}) chalao, '0' ya '!stop' se roko, '!emotes <page>' se list dekho.")
-        await self.highrise.chat("👑 Owner commands (1/3): !come | !follow | !unfollow | !goto <user> | !tp x y z | !tpto <user> | !bring <user>")
-        await self.highrise.chat("👑 Owner commands (2/3): !test <id> | !addemote <n> <id> | !removeemote <n> | !announce <msg> | !whisper <user> <msg> | !react <user> <reaction>")
-        await self.highrise.chat("👑 Owner commands (3/3): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !joined <user> | !sendto <user> <room_id> | !addhelper/!removehelper <user>")
+        await self.highrise.chat("👑 Owner (1/4): !come | !follow | !unfollow | !goto <user> | !tp x y z | !tpto <user> | !bring <user>")
+        await self.highrise.chat("👑 Owner (2/4) FLOORS: !setfloor <naam> | !floor <naam> | !floors | !delfloor <naam>")
+        await self.highrise.chat("👑 Owner (3/4): !test <id> | !addemote <n> <id> | !removeemote <n> | !announce <msg> | !whisper <user> <msg> | !react <user> <reaction>")
+        await self.highrise.chat("👑 Owner (4/4): !kick/!mute/!ban/!unmute/!unban <user> | !mod/!unmod/!designer <user> | !voiceadd/!voiceremove <user> | !tip <user> <amt> | !wallet | !who | !joined <user> | !sendto <user> <room_id> | !addhelper/!removehelper <user>")
 
     # ============================ CORE HELPERS ==========================
     def _is_owner(self, user: User) -> bool:
@@ -541,10 +632,6 @@ class Bot(BaseBot):
                 await self.highrise.chat(f"⚠️ '{emote_id}' invalid ya unavailable emote hai.")
 
     async def _stop_emote(self, user: User) -> None:
-        """Chalta hua (looping) emote turant rok deta hai.
-        Highrise API mein direct 'cancel emote' function nahi hai, isliye
-        ek chhota STOP_EMOTE_ID chala kar purana emote override kar dete
-        hain — result mein user turant normal khada dikhta hai."""
         try:
             await self.highrise.send_emote(STOP_EMOTE_ID, user.id)
             self._last_emote_used.pop(user.id, None)
@@ -579,6 +666,7 @@ class Bot(BaseBot):
 
     # ---- movement helpers ----
     async def _bot_come_to_owner(self, owner: User) -> None:
+        """Bot khud owner ke paas teleport ho jaata hai."""
         _, owner_pos = await self._get_position(owner.username)
         if owner_pos is None:
             await self.highrise.chat("⚠️ Owner ki position nahi mil payi.")
@@ -652,6 +740,53 @@ class Bot(BaseBot):
             self._follow_task.cancel()
             self._follow_task = None
 
+    # ---- FLOOR TELEPORT HELPERS (NAYA) ----
+    async def _set_floor(self, owner: User, name: str) -> None:
+        if not name:
+            await self.highrise.chat("⚠️ Format: !setfloor <naam> (e.g. !setfloor first)")
+            return
+        _, owner_pos = await self._get_position(owner.username)
+        if owner_pos is None:
+            await self.highrise.chat("⚠️ Tumhari position nahi mil payi.")
+            return
+        self._floors[name.lower()] = {
+            "x": owner_pos.x, "y": owner_pos.y, "z": owner_pos.z,
+            "facing": getattr(owner_pos, "facing", "FrontRight"),
+        }
+        self._save_floors()
+        await self.highrise.chat(f"📍 Floor '{name}' save ho gaya isi position par!")
+
+    async def _goto_floor(self, owner: User, name: str) -> None:
+        if not name:
+            await self.highrise.chat("⚠️ Format: !floor <naam>")
+            return
+        data = self._floors.get(name.lower())
+        if data is None:
+            await self.highrise.chat(f"⚠️ Floor '{name}' abhi tak set nahi hai. Pehle '!setfloor {name}' se save karo.")
+            return
+        try:
+            dest = Position(data["x"], data["y"], data["z"], facing=data.get("facing", "FrontRight"))
+            await self.highrise.teleport(owner.id, dest)
+            await self.highrise.chat(f"🚀 {owner.username}, '{name}' floor par teleport ho gaye!")
+        except Exception as e:
+            print("Floor TP error:", e)
+            await self.highrise.chat("⚠️ Floor teleport fail ho gaya.")
+
+    async def _list_floors(self) -> None:
+        if not self._floors:
+            await self.highrise.chat("Abhi koi floor set nahi hai. '!setfloor <naam>' se banao.")
+            return
+        names = ", ".join(sorted(self._floors.keys()))
+        await self.highrise.chat(f"🏢 Saved floors: {names}")
+
+    async def _del_floor(self, name: str) -> None:
+        if name.lower() in self._floors:
+            del self._floors[name.lower()]
+            self._save_floors()
+            await self.highrise.chat(f"🗑️ Floor '{name}' delete ho gaya.")
+        else:
+            await self.highrise.chat(f"⚠️ Floor '{name}' milaa nahi.")
+
     # ---- moderation / privilege helpers ----
     async def _moderate(self, target_name: str, action: str, minutes: int = None) -> None:
         target_user, _ = await self._get_position(target_name)
@@ -684,3 +819,17 @@ class Bot(BaseBot):
             await self.highrise.chat(
                 "⚠️ Privilege set nahi ho paya — bot ke paas Owner rights chahiye is action ke liye."
             )
+
+
+# ============================ MULTI-ROOM RUNNER ========================
+async def main():
+    """Dono rooms ko ek hi process mein, ek saath start karta hai."""
+    definitions = [
+        BotDefinition(Bot(room_label=room["label"]), room["room_id"], BOT_TOKEN)
+        for room in ROOMS
+    ]
+    await __main__.main(definitions)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
