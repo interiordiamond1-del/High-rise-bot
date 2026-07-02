@@ -1,94 +1,79 @@
 """
 ====================================================================
   LANAX.4 — Highrise Bot (SINGLE ROOM, LOOPING EMOTES, FLOOR-TELEPORT)
-  v5 — CRASH-PROOF + 24/7 READY
+  v6 — FIXED CRASH LOOP (highrise.run AttributeError) + CLI-BASED START
 ====================================================================
 
 --------------------------------------------------------------------
-IS VERSION MEIN KYA FIX/UPDATE HUA HAI (v5):
+V6 MEIN KYA FIX HUA (root cause analysis):
 --------------------------------------------------------------------
-1) AUTO-RESTART / CRASH-PROOF RUNNER
-   Pehle agar `highrise.run()` ke andar KOI BHI unexpected exception
-   aata tha (network drop, SDK internal error, koi bhi bug), pura
-   Python process crash ho jaata tha aur exit code 1 ke saath band ho
-   jaata tha. Render tab tak wait karta jab tak use dobara start na
-   karna pade — isi wajah se bot "offline" dikhta tha.
-   FIX: Ab `main()` ek infinite retry-loop mein hai. Agar bot kabhi
-   bhi crash hoga (kisi bhi reason se), error log ho jayega aur bot
-   khud 10 second baad dobara connect try karega — process kabhi
-   exit nahi hoga. Isse Render restart-loop wali dikkat bhi khatam.
+1) ASLI CRASH KA KAARAN:
+   `highrise-bot-sdk==25.1.0` mein top-level `highrise` module ke
+   andar `run()` naam ka koi function hai hi nahi. Package sirf ek
+   CLI entry point expose karta hai:
+       highrise <module>:<BotClass> <room_id> <api_token>
+   (Yeh `highrise.__main__:run` se banta hai, jo console-script hai,
+   direct-importable function nahi.)
+   Isi wajah se purana code:
+       await highrise.run(definitions)
+   har baar `AttributeError: module 'highrise' has no attribute
+   'run'` de raha tha, aur crash-proof runner har 10 second mein
+   isi error ko dobara try karke infinite crash-loop bana raha tha
+   (screenshot mein "attempt #7" isi cheez ka sabot hai).
 
-2) HEALTH-CHECK WEB SERVER (24/7 ke liye zaroori)
-   Render "Web Service" type deployments ek open PORT expect karte
-   hain, aur free-plan services bina traffic ke sleep ho sakti hain.
-   FIX: Ek chhota aiohttp server add kiya hai jo $PORT par "OK" reply
-   karta hai (`/` aur `/health` route). Isse:
-     - Render ko pata chalta hai service healthy hai (agar Web
-       Service type use kar rahe ho).
-     - UptimeRobot (ya kisi bhi uptime-ping tool) se is URL ko har
-       5 minute ping karke free-plan sleep hone se bacha sakte ho.
+   FIX: Ab hum SDK ke apne official, supported CLI command
+   (`highrise <file>:<Class> <room_id> <token>`) ko is script ke
+   andar se hi `asyncio.create_subprocess_exec(...)` se chalate hain.
+   Isse hum SDK ke kisi bhi PRIVATE/internal function par depend
+   nahi karte — sirf publicly documented CLI use hoti hai — isliye
+   future SDK updates mein bhi yeh tootne ka risk kam hai.
 
-3) SECRETS AB ENVIRONMENT VARIABLES SE (safer)
-   BOT_TOKEN aur ROOM_ID ab pehle os.environ se try hote hain, agar
-   env var set nahi hai to purana hardcoded value fallback ke taur
-   par chalta hai — isse token GitHub/public repo mein expose hone
-   ka risk kam hota hai. Render Dashboard -> Environment mein
-   BOT_TOKEN aur ROOM_ID daal sakte ho.
+2) EMOTES NAAM MISMATCH BUG:
+   Dictionary `EMOTES_SET = {...}` naam se define thi, lekin poore
+   code mein (`if text in EMOTES`, `EMOTES.setdefault(...)`, list
+   commands, etc.) `EMOTES` naam use ho raha tha jo kabhi define hi
+   nahi hua tha — yeh `NameError` deta agar module load hote waqt
+   pahunchta. FIX: dictionary ka naam ab consistently `EMOTES` hai.
 
-4) DM (private message) auto-reply — pehle jaisa hi, thoda polish.
-
-5) Emote start/stop confirmation chat messages — pehle jaisa hi.
-
-6) MINOR ROBUSTNESS FIXES:
-   - Floors data har deploy pe reset ho sakta hai kyunki Render ka
-     default disk ephemeral hota hai (persistent disk add-on ke
-     bina). Isliye ek warning print hoti hai startup par.
-   - Emote-loop tasks ab bot restart / on_start dobara chalne par
-     bhi safely reset hote hain.
+3) HEALTH-CHECK SERVER (24/7 ke liye) — waisa hi hai, koi change
+   nahi. Health server aur bot-runner dono `asyncio.gather()` se
+   saath mein chalte hain, jaisa pehle tha.
 
 --------------------------------------------------------------------
-"ONLINE 24/7" WALA ISSUE — ZAROORI JAANKARI:
+RENDER START COMMAND — DO OPTIONS:
 --------------------------------------------------------------------
-Yeh crash-proof runner bot ko crash hone par khud-ba-khud restart
-karega bina process exit kiye — matlab agar Render "Background
-Worker" ya "Web Service" chala rahe ho, wo baar-baar deploy/restart
-nahi karega, bot process hamesha zinda rahega aur reconnect karta
-rahega.
+OPTION A (RECOMMENDED — health-check + auto-restart intact):
+   Service Type : Web Service
+   Start Command: python bot.py
+   Yeh script khud health-check server chalata hai AUR background
+   mein `highrise bot:Bot <room_id> <token>` CLI ko subprocess ke
+   through chalata/reconnect karta hai. Render ko open PORT milta
+   hai, isliye free-plan bhi UptimeRobot se jaga sakte ho.
 
-Lekin Render ke FREE plan ki apni limitation hai:
-   - FREE "Web Service" 15 min inactivity ke baad sleep ho jaati hai
-     (agar koi HTTP request na aaye). Health-check route isi liye
-     add kiya hai — UptimeRobot se is URL ko 5 min mein ek baar ping
-     karo taaki wo sleep na ho:
-         https://<your-render-app>.onrender.com/health
-   - FREE "Background Worker" ko koi bhi HTTP traffic wake nahi kar
-     sakta — usme sirf paid "Starter" plan hi reliable 24/7 deta hai.
+OPTION B (pure official CLI, health-check NAHI hoga):
+   Service Type : Background Worker (paid Starter plan chahiye
+                  24/7 ke liye, kyunki free Background Worker
+                  koi HTTP traffic se wake nahi hota)
+   Start Command: highrise bot:Bot $ROOM_ID $BOT_TOKEN
+   Yahan file ka naam "bot.py" hai isliye module path "bot" hai,
+   aur class ka naam "Bot" hai isliye "bot:Bot". Agar file ka naam
+   alag rakha (jaise mybot.py) to "mybot:Bot" likhna hoga.
+   Is option mein SDK khud reconnect karta hai (25.1.0 changelog:
+   "Fix bot to reconnect automatically when server closes the
+   connection instead of exiting"), lekin health-check route nahi
+   milega, aur agar process kabhi bilkul crash ho gaya to Render
+   khud dobara start karega (thoda downtime ho sakta hai).
 
-   -> Sabse reliable tareeka: Render Dashboard -> Service -> Settings
-      -> Instance Type -> "Starter" (paid) plan.
-   -> Free plan chahiye to service type "Web Service" rakho (Background
-      Worker nahi) taaki health-check route ping ho sake.
-
---------------------------------------------------------------------
-RENDER DEPLOY:
---------------------------------------------------------------------
-1) requirements.txt:
-       highrise-bot-sdk==25.1.0
-       aiohttp>=3.9
-
-2) Environment Variables (Render Dashboard -> Environment):
+Environment Variables (dono options ke liye zaroori):
        PYTHON_VERSION = 3.11.9
        BOT_TOKEN       = <apna token>
        ROOM_ID         = <apna room id>
-       PORT            = 10000   (Render usually apne aap set karta hai)
+       PORT            = 10000   (Option A ke liye; Render usually
+                                   apne aap set karta hai)
 
-3) Start Command:
-       python bot.py
-
-4) Service Type:
-   - Agar free plan par 24/7 ke liye health-check use karna hai to
-     service ko "Web Service" banao (na ki "Background Worker"),
-     taaki health-check route pe traffic aa sake.
+requirements.txt:
+       highrise-bot-sdk==25.1.0
+       aiohttp>=3.9
 ====================================================================
 """
 
@@ -97,13 +82,12 @@ import json
 import logging
 import os
 import random
+import sys
 import time
 import traceback
 from datetime import datetime
 
-import highrise
 from highrise import BaseBot, User
-from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
 
 try:
@@ -148,7 +132,7 @@ STOP_EMOTE_ID = "emote-wave"
 DATA_DIR = "./bot_data"
 FLOOR_FILE = os.path.join(DATA_DIR, "floors.json")
 
-# Bot crash ho jaaye to kitne second baad reconnect try kare
+# Bot crash/exit ho jaaye to kitne second baad reconnect try kare
 RECONNECT_DELAY_SECONDS = 10
 
 DM_WELCOME_MESSAGE = (
@@ -162,10 +146,10 @@ DM_FALLBACK_MESSAGE = (
 )
 
 
-# ============================ EMOTES (1-250) =========================
+# ============================ EMOTES (1-311) =========================
 # Sirf verified IDs bhare hain. Baaki slots "REPLACE_ME_<n>" hain —
 # unhe !addemote <n> <real_id> se bharo.
-EMOTES_SET = {
+EMOTES = {
     "1": "emote-model",
     "2": "emote-dontstartnow",
     "3": "emote-russian",
@@ -188,7 +172,7 @@ EMOTES_SET = {
     "20": "emote-viralgroove",
     "21": "emote-shuffledance",
     "22": "emote-raisetheroof",
-    "23": "emote-cutey",  # Emote cute
+    "23": "emote-cutey",
     "24": "emote-telekinesis",
     "25": "emote-energyball",
     "26": "emote-maniac",
@@ -476,11 +460,11 @@ EMOTES_SET = {
     "308": "emote-pose12",
     "309": "emote-pose11",
     "310": "emote-aliceshrink",
-    "311": "emote-reachforthestars"
+    "311": "emote-reachforthestars",
 }
 
-
-# 51-250 abhi khaali hain — !addemote se bharo
+# 51-250 mein agar koi slot khaali reh gaya ho to placeholder bharo
+# (jo already filled hain unhe setdefault chhu tak nahi payega).
 for _n in range(51, 251):
     EMOTES.setdefault(str(_n), f"REPLACE_ME_{_n}")
 
@@ -1229,21 +1213,54 @@ async def start_health_server():
     log.info(f"🌐 Health-check server chal raha hai port {port} par (/ aur /health)")
 
 
-# ============================ CRASH-PROOF RUNNER ========================
+# ============================ CRASH-PROOF RUNNER (CLI-BASED) ============
 async def run_bot_forever():
-    """Bot ko baar-baar reconnect karta hai agar kabhi crash ho jaaye —
-    process kabhi exit nahi hota, isliye Render ise 'crashed' nahi maanega."""
-    definitions = [BotDefinition(Bot, ROOM_ID, BOT_TOKEN)]
+    """
+    Bot ko OFFICIAL highrise-bot-sdk CLI ke through chalata hai, subprocess
+    mein — exactly jaise SDK README kehta hai:
+
+        highrise <module>:<BotClass> <room_id> <api_token>
+
+    Yeh approach kisi bhi PRIVATE/internal SDK function (jaise purana
+    `highrise.run()`, jo exist hi nahi karta) par depend nahi karti —
+    isliye future SDK version bump se bhi yeh tootne ka risk kam hai.
+
+    Agar CLI process kabhi bhi exit/crash ho jaaye (network drop, SDK
+    error, etc.), hum use fresh se dobara start karte hain — process
+    kabhi permanently exit nahi hota.
+    """
+    module_name = os.path.splitext(os.path.basename(__file__))[0]  # e.g. "bot"
+    target = f"{module_name}:Bot"
+    cmd = ["highrise", target, ROOM_ID, BOT_TOKEN]
+
     attempt = 0
     while True:
         attempt += 1
+        log.info(f"🚀 Bot start ho raha hai (attempt #{attempt}) via: highrise {target} <room_id> <token>")
         try:
-            log.info(f"🚀 Bot start ho raha hai (attempt #{attempt})...")
-            await highrise.run(definitions)
-            # Agar highrise.run() normally return kar jaaye (rare case)
-            log.warning("highrise.run() khatam ho gaya bina exception ke — dobara start kar rahe hain.")
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            # Child process (highrise CLI) ke logs ko apne hi logger mein
+            # stream karo, taaki Render logs mein sab kuch ek jagah dikhe.
+            if process.stdout is not None:
+                async for raw_line in process.stdout:
+                    line = raw_line.decode(errors="ignore").rstrip()
+                    if line:
+                        log.info(f"[highrise-cli] {line}")
+            returncode = await process.wait()
+            log.warning(f"⚠️ highrise CLI process band ho gaya (exit code {returncode}).")
+        except FileNotFoundError:
+            log.error(
+                "❌ 'highrise' command nahi mila is environment mein. "
+                "Confirm karo ki requirements.txt mein 'highrise-bot-sdk==25.1.0' "
+                "sahi se install hua hai (Render build logs check karo)."
+            )
         except Exception:
-            log.error(f"❌ Bot crash ho gaya:\n{traceback.format_exc()}")
+            log.error(f"❌ Bot runner crash ho gaya:\n{traceback.format_exc()}")
+
         log.info(f"⏳ {RECONNECT_DELAY_SECONDS} second baad reconnect try karenge...")
         await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
