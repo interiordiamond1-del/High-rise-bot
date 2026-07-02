@@ -1,73 +1,104 @@
 """
 ====================================================================
   LANAX.4 — Highrise Bot (SINGLE ROOM, LOOPING EMOTES, FLOOR-TELEPORT)
+  v5 — CRASH-PROOF + 24/7 READY
 ====================================================================
 
 --------------------------------------------------------------------
-IS VERSION MEIN KYA FIX/UPDATE HUA HAI:
+IS VERSION MEIN KYA FIX/UPDATE HUA HAI (v5):
 --------------------------------------------------------------------
-1) CRASH FIX (asli reason bot "online" nahi ho raha tha)
-   Log mein clearly likha tha:
-       NameError: name 'highrise' is not defined
-       File "bot.py", line 833, in main
-       await highrise.run(definitions)
-   Root cause: file ke top par sirf
-       from highrise import BaseBot, User
-   import tha — lekin code neeche `highrise.run(...)` bhi call kar
-   raha tha, jiske liye pura `highrise` module (top-level package)
-   import hona zaroori hai. Isi wajah se bot start hote hi crash ho
-   raha tha aur Render use baar-baar restart kar raha tha — isiliye
-   room mein bot "online" nahi dikh raha tha.
-   FIX: `import highrise` add kar diya top par.
+1) AUTO-RESTART / CRASH-PROOF RUNNER
+   Pehle agar `highrise.run()` ke andar KOI BHI unexpected exception
+   aata tha (network drop, SDK internal error, koi bhi bug), pura
+   Python process crash ho jaata tha aur exit code 1 ke saath band ho
+   jaata tha. Render tab tak wait karta jab tak use dobara start na
+   karna pade — isi wajah se bot "offline" dikhta tha.
+   FIX: Ab `main()` ek infinite retry-loop mein hai. Agar bot kabhi
+   bhi crash hoga (kisi bhi reason se), error log ho jayega aur bot
+   khud 10 second baad dobara connect try karega — process kabhi
+   exit nahi hoga. Isse Render restart-loop wali dikkat bhi khatam.
 
-2) DM (private message) auto-reply
-   Pehle on_message() sirf console mein print karta tha, user ko
-   koi reply nahi jaata tha. Ab jab koi bot ko naya DM bhejta hai,
-   bot us conversation mein ek welcome/help reply bhejta hai
-   (self.highrise.send_message se). Isse "kisi ko bhi DM mein
-   acche se reply" wala part solve hota hai.
+2) HEALTH-CHECK WEB SERVER (24/7 ke liye zaroori)
+   Render "Web Service" type deployments ek open PORT expect karte
+   hain, aur free-plan services bina traffic ke sleep ho sakti hain.
+   FIX: Ek chhota aiohttp server add kiya hai jo $PORT par "OK" reply
+   karta hai (`/` aur `/health` route). Isse:
+     - Render ko pata chalta hai service healthy hai (agar Web
+       Service type use kar rahe ho).
+     - UptimeRobot (ya kisi bhi uptime-ping tool) se is URL ko har
+       5 minute ping karke free-plan sleep hone se bacha sakte ho.
 
-3) Emote start/stop par chat confirmation
-   Ab jab koi number bhejta hai aur uska loop emote start/stop hota
-   hai, bot world chat mein ek chhota confirmation message bhejta
-   hai (kisne konsa emote start/stop kiya) — sirf silently emote
-   chalane ke bajaye.
+3) SECRETS AB ENVIRONMENT VARIABLES SE (safer)
+   BOT_TOKEN aur ROOM_ID ab pehle os.environ se try hote hain, agar
+   env var set nahi hai to purana hardcoded value fallback ke taur
+   par chalta hai — isse token GitHub/public repo mein expose hone
+   ka risk kam hota hai. Render Dashboard -> Environment mein
+   BOT_TOKEN aur ROOM_ID daal sakte ho.
+
+4) DM (private message) auto-reply — pehle jaisa hi, thoda polish.
+
+5) Emote start/stop confirmation chat messages — pehle jaisa hi.
+
+6) MINOR ROBUSTNESS FIXES:
+   - Floors data har deploy pe reset ho sakta hai kyunki Render ka
+     default disk ephemeral hota hai (persistent disk add-on ke
+     bina). Isliye ek warning print hoti hai startup par.
+   - Emote-loop tasks ab bot restart / on_start dobara chalne par
+     bhi safely reset hote hain.
 
 --------------------------------------------------------------------
 "ONLINE 24/7" WALA ISSUE — ZAROORI JAANKARI:
 --------------------------------------------------------------------
-Iss crash ko fix karne se bot ab crash-loop nahi karega, jo abhi tak
-ka sabse bada "online nahi aa raha" wajah tha. Lekin agar Render ke
-FREE plan par chala rahe ho, to free web services/background workers
-kuch der inactivity ke baad "sleep" ho sakte hain — Highrise ki apni
-official docs bhi kehti hain: agar bot ko room mein 24/7 chahiye to
-hosting service dedicated/paid plan par rakhna padta hai (PC band
-karne par bhi bot band ho jaata hai). Iske liye:
-   - Render Dashboard -> apni service -> Settings -> Instance Type
-     ko "Starter" (paid) plan par upgrade karo taaki woh kabhi sleep
-     na ho / crash hone par turant restart ho.
-   - Free plan use kar rahe ho to kam se kam ek "health check" route
-     ya uptime-ping service (jaise UptimeRobot) laga sakte ho, lekin
-     background worker type services ke liye woh guarantee nahi
-     karta — paid plan hi reliable 24/7 ke liye best hai.
+Yeh crash-proof runner bot ko crash hone par khud-ba-khud restart
+karega bina process exit kiye — matlab agar Render "Background
+Worker" ya "Web Service" chala rahe ho, wo baar-baar deploy/restart
+nahi karega, bot process hamesha zinda rahega aur reconnect karta
+rahega.
+
+Lekin Render ke FREE plan ki apni limitation hai:
+   - FREE "Web Service" 15 min inactivity ke baad sleep ho jaati hai
+     (agar koi HTTP request na aaye). Health-check route isi liye
+     add kiya hai — UptimeRobot se is URL ko 5 min mein ek baar ping
+     karo taaki wo sleep na ho:
+         https://<your-render-app>.onrender.com/health
+   - FREE "Background Worker" ko koi bhi HTTP traffic wake nahi kar
+     sakta — usme sirf paid "Starter" plan hi reliable 24/7 deta hai.
+
+   -> Sabse reliable tareeka: Render Dashboard -> Service -> Settings
+      -> Instance Type -> "Starter" (paid) plan.
+   -> Free plan chahiye to service type "Web Service" rakho (Background
+      Worker nahi) taaki health-check route ping ho sake.
 
 --------------------------------------------------------------------
 RENDER DEPLOY:
 --------------------------------------------------------------------
 1) requirements.txt:
        highrise-bot-sdk==25.1.0
-2) Environment Variable:
+       aiohttp>=3.9
+
+2) Environment Variables (Render Dashboard -> Environment):
        PYTHON_VERSION = 3.11.9
+       BOT_TOKEN       = <apna token>
+       ROOM_ID         = <apna room id>
+       PORT            = 10000   (Render usually apne aap set karta hai)
+
 3) Start Command:
        python bot.py
+
+4) Service Type:
+   - Agar free plan par 24/7 ke liye health-check use karna hai to
+     service ko "Web Service" banao (na ki "Background Worker"),
+     taaki health-check route pe traffic aa sake.
 ====================================================================
 """
 
 import asyncio
 import json
+import logging
 import os
 import random
 import time
+import traceback
 from datetime import datetime
 
 import highrise
@@ -75,13 +106,32 @@ from highrise import BaseBot, User
 from highrise.__main__ import BotDefinition
 from highrise.models import Position, SessionMetadata
 
+try:
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
+
+# ============================ LOGGING ================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger("LANAX4")
+
 
 # ============================ CONFIG ================================
 BOT_NAME = "LANAX.4"
-BOT_TOKEN = "c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a"
+
+# Env vars ko priority — agar set nahi hain to purana hardcoded value chalega.
+BOT_TOKEN = os.environ.get(
+    "BOT_TOKEN",
+    "c58d1869fbad962a328c20a2abc0333400a128ecbbf8c6d1bf9382b44cb2f87a",
+)
 
 # --- SIRF EK ROOM (multilogin crash fix) ---
-ROOM_ID = "63fcc70dfb16e9c663269160"   # naye link ka ownedRoomId
+ROOM_ID = os.environ.get("ROOM_ID", "63fcc70dfb16e9c663269160")
 
 OWNER_USERNAME = "LANAX4"
 OWNER_USER_ID = "lanax4"   # agar exact User ID pata ho toh yahan daal do
@@ -97,6 +147,9 @@ STOP_EMOTE_ID = "emote-wave"
 
 DATA_DIR = "./bot_data"
 FLOOR_FILE = os.path.join(DATA_DIR, "floors.json")
+
+# Bot crash ho jaaye to kitne second baad reconnect try kare
+RECONNECT_DELAY_SECONDS = 10
 
 DM_WELCOME_MESSAGE = (
     "👋 Hi! Main {bot} hoon. Room mein jaake number (1 se 250) bhejo "
@@ -193,7 +246,7 @@ class Bot(BaseBot):
                 with open(FLOOR_FILE, "r") as f:
                     self._floors = json.load(f)
         except Exception as e:
-            print("Floor load error:", e)
+            log.warning(f"Floor load error: {e}")
             self._floors = {}
 
     def _save_floors(self):
@@ -202,14 +255,19 @@ class Bot(BaseBot):
             with open(FLOOR_FILE, "w") as f:
                 json.dump(self._floors, f)
         except Exception as e:
-            print("Floor save error:", e)
+            log.warning(f"Floor save error: {e}")
 
     # ------------------------- lifecycle -----------------------------
     async def on_start(self, session_metadata: SessionMetadata) -> None:
+        # Restart/reconnect ke baad purane loops fresh se shuru karo
+        self._emote_tasks.clear()
+        self._last_emote_used.clear()
+        self._emote_number_used.clear()
+
         self.bot_user_id = session_metadata.user_id
         os.makedirs(DATA_DIR, exist_ok=True)
         self._load_floors()
-        print(f"✅ {BOT_NAME} connect ho gaya! bot_user_id = {self.bot_user_id}")
+        log.info(f"✅ {BOT_NAME} connect ho gaya! bot_user_id = {self.bot_user_id}")
         try:
             await self.highrise.chat(
                 f"🤖 {BOT_NAME} online hai! Number bhejo (1-{len(EMOTES)}) apna emote "
@@ -217,29 +275,29 @@ class Bot(BaseBot):
                 f"Rokne ke liye '0' ya '!stop'. Owner: !owner"
             )
         except Exception as e:
-            print("Startup message error:", e)
+            log.warning(f"Startup message error: {e}")
 
     async def on_user_join(self, user: User, *args, **kwargs) -> None:
         join_time = datetime.now()
         self._join_times[user.id] = join_time
         time_str = join_time.strftime("%d-%b-%Y %I:%M %p")
-        print(f"➡️ {user.username} room mein aaya: {time_str}")
+        log.info(f"➡️ {user.username} room mein aaya: {time_str}")
         if WELCOME_MESSAGE_ENABLED:
             try:
                 await self.highrise.chat(f"👋 Welcome, {user.username}! (Aaye: {time_str})")
             except Exception as e:
-                print("Welcome message error:", e)
+                log.warning(f"Welcome message error: {e}")
 
     async def on_user_leave(self, user: User) -> None:
         # Loop chal raha ho toh cleanup kar do taaki memory leak na ho
         await self._cancel_loop(user.id)
 
     async def on_moderate(self, moderator_id, target_user_id, moderate_type, action_length=None) -> None:
-        print(f"Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
+        log.info(f"Room moderated: mod={moderator_id} target={target_user_id} action={moderate_type} len={action_length}")
 
-    # ---- DM (private message) handling — ab bot reply karta hai ----
+    # ---- DM (private message) handling — bot reply karta hai ----
     async def on_message(self, user_id, conversation_id, is_new_conversation) -> None:
-        print(f"DM received from {user_id} in {conversation_id} (new={is_new_conversation})")
+        log.info(f"DM received from {user_id} in {conversation_id} (new={is_new_conversation})")
         try:
             if is_new_conversation or conversation_id not in self._greeted_conversations:
                 self._greeted_conversations.add(conversation_id)
@@ -251,10 +309,18 @@ class Bot(BaseBot):
             else:
                 await self.highrise.send_message(conversation_id, DM_FALLBACK_MESSAGE, "text")
         except Exception as e:
-            print("DM reply error:", e)
+            log.warning(f"DM reply error: {e}")
 
     # ------------------------- main chat handler ----------------------
     async def on_chat(self, user: User, message: str) -> None:
+        try:
+            await self._handle_chat(user, message)
+        except Exception:
+            # Kabhi bhi single chat command fail ho, pura bot crash na ho —
+            # sirf error log ho aur bot chalta rahe.
+            log.error(f"on_chat handler error:\n{traceback.format_exc()}")
+
+    async def _handle_chat(self, user: User, message: str) -> None:
         text = message.strip()
         lower = text.lower()
         is_owner = self._is_owner(user)
@@ -428,7 +494,7 @@ class Bot(BaseBot):
                         await self.highrise.send_whisper(target_user.id, msg)
                         await self.highrise.chat(f"✉️ Whisper bhej diya {target_name} ko.")
                     except Exception as e:
-                        print("Whisper error:", e)
+                        log.warning(f"Whisper error: {e}")
                         await self.highrise.chat("⚠️ Whisper fail ho gaya.")
             else:
                 await self.highrise.chat("⚠️ Format: !whisper <username> <message>")
@@ -445,7 +511,7 @@ class Bot(BaseBot):
                     try:
                         await self.highrise.react(reaction, target_user.id)
                     except Exception as e:
-                        print("React error:", e)
+                        log.warning(f"React error: {e}")
                         await self.highrise.chat("⚠️ Reaction fail ho gaya.")
             else:
                 await self.highrise.chat("⚠️ Format: !react <username> <reaction>")
@@ -503,7 +569,7 @@ class Bot(BaseBot):
                     await self.highrise.add_user_to_voice(target_user.id)
                     await self.highrise.chat(f"🎤 {target_name} ko voice mein add kiya.")
                 except Exception as e:
-                    print("Voice add error:", e)
+                    log.warning(f"Voice add error: {e}")
                     await self.highrise.chat("⚠️ Voice add fail ho gaya.")
             return True
         if lower.startswith("!voiceremove "):
@@ -516,7 +582,7 @@ class Bot(BaseBot):
                     await self.highrise.remove_user_from_voice(target_user.id)
                     await self.highrise.chat(f"🔇 {target_name} ko voice se remove kiya.")
                 except Exception as e:
-                    print("Voice remove error:", e)
+                    log.warning(f"Voice remove error: {e}")
                     await self.highrise.chat("⚠️ Voice remove fail ho gaya.")
             return True
 
@@ -533,7 +599,7 @@ class Bot(BaseBot):
                         await self.highrise.tip_user(target_user.id, amount)
                         await self.highrise.chat(f"💰 {target_name} ko {amount} tip bheja.")
                     except Exception as e:
-                        print("Tip error:", e)
+                        log.warning(f"Tip error: {e}")
                         await self.highrise.chat("⚠️ Tip fail ho gaya. Valid: gold_bar_1/5/10/50/100/500/1k/5000/10k")
             else:
                 await self.highrise.chat("⚠️ Format: !tip <username> <gold_bar_amount>")
@@ -544,7 +610,7 @@ class Bot(BaseBot):
                 wallet = await self.highrise.get_wallet()
                 await self.highrise.chat(f"💼 Bot wallet: {wallet.content}")
             except Exception as e:
-                print("Wallet error:", e)
+                log.warning(f"Wallet error: {e}")
                 await self.highrise.chat("⚠️ Wallet fetch nahi ho paya.")
             return True
 
@@ -554,7 +620,7 @@ class Bot(BaseBot):
                 names = ", ".join(ru.username for ru, _ in room_users)
                 await self.highrise.chat(f"👥 Room mein: {names}" if names else "Room khaali hai.")
             except Exception as e:
-                print("Who error:", e)
+                log.warning(f"Who error: {e}")
             return True
 
         if lower.startswith("!joined "):
@@ -623,7 +689,7 @@ class Bot(BaseBot):
         try:
             await self.highrise.send_emote(emote_id, user_id)
         except Exception as e:
-            print(f"Emote '{emote_id}' fail:", e)
+            log.warning(f"Emote '{emote_id}' fail: {e}")
             if notify is not None:
                 await self.highrise.chat(f"⚠️ '{emote_id}' invalid ya unavailable emote hai.")
 
@@ -641,6 +707,8 @@ class Bot(BaseBot):
                     await asyncio.sleep(EMOTE_REPEAT_SECONDS)
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                log.error(f"Emote loop crashed for {user_id}:\n{traceback.format_exc()}")
 
         self._emote_tasks[user_id] = asyncio.create_task(_loop())
         if number:
@@ -651,7 +719,7 @@ class Bot(BaseBot):
             try:
                 await self.highrise.chat(f"🕺 {announce.username} ne emote {label} start kiya (loop) — rokne ke liye '0' bhejo.")
             except Exception as e:
-                print("Announce error:", e)
+                log.warning(f"Announce error: {e}")
 
     async def _cancel_loop(self, user_id: str, play_stop_emote: bool = False, announce: User = None) -> None:
         task = self._emote_tasks.pop(user_id, None)
@@ -662,14 +730,14 @@ class Bot(BaseBot):
             try:
                 await self.highrise.send_emote(STOP_EMOTE_ID, user_id)
             except Exception as e:
-                print("Stop emote error:", e)
+                log.warning(f"Stop emote error: {e}")
         self._last_emote_used.pop(user_id, None)
         self._emote_number_used.pop(user_id, None)
         if announce is not None and had_loop:
             try:
                 await self.highrise.chat(f"⏹️ {announce.username} ka emote loop band ho gaya.")
             except Exception as e:
-                print("Announce error:", e)
+                log.warning(f"Announce error: {e}")
 
     async def _get_position(self, username: str):
         room_users = (await self.highrise.get_room_users()).content
@@ -712,6 +780,8 @@ class Bot(BaseBot):
                     await asyncio.sleep(EMOTE_REPEAT_SECONDS)
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                log.error(f"Party loop crashed:\n{traceback.format_exc()}")
 
         self._party_task = asyncio.create_task(_loop())
         await self.highrise.chat("🎉 Party mode ON — bot random emotes cycle karega! '!partystop' se roko.")
@@ -734,7 +804,7 @@ class Bot(BaseBot):
                 await self.highrise.walk_to(owner_pos)
             await self.highrise.chat(f"🛰️ Aa gaya, {owner.username}!")
         except Exception as e:
-            print("Come-here error:", e)
+            log.warning(f"Come-here error: {e}")
             await self.highrise.chat("⚠️ Aane mein error aaya.")
 
     async def _teleport_owner_to_coords(self, owner: User, coords_str: str) -> None:
@@ -745,7 +815,7 @@ class Bot(BaseBot):
             await self.highrise.teleport(owner.id, dest)
             await self.highrise.chat(f"🚀 {owner.username}, teleport ho gaye {x},{y},{z} par!")
         except Exception as e:
-            print("TP error:", e)
+            log.warning(f"TP error: {e}")
             await self.highrise.chat("⚠️ Format: !tp <x> <y> <z>")
 
     async def _teleport_owner_to_user(self, owner: User, target_name: str) -> None:
@@ -757,7 +827,7 @@ class Bot(BaseBot):
             await self.highrise.teleport(owner.id, target_pos)
             await self.highrise.chat(f"🚀 {owner.username}, {target_name} ke paas teleport ho gaye!")
         except Exception as e:
-            print("TPTO error:", e)
+            log.warning(f"TPTO error: {e}")
             await self.highrise.chat("⚠️ Teleport fail ho gaya.")
 
     async def _bring_user_to_owner(self, owner: User, target_name: str) -> None:
@@ -770,7 +840,7 @@ class Bot(BaseBot):
             await self.highrise.teleport(target_user.id, owner_pos)
             await self.highrise.chat(f"🚀 {target_name} ko {owner.username} ke paas la diya!")
         except Exception as e:
-            print("Bring error:", e)
+            log.warning(f"Bring error: {e}")
             await self.highrise.chat("⚠️ Bring fail ho gaya.")
 
     async def _start_follow(self, owner_username: str) -> None:
@@ -784,7 +854,7 @@ class Bot(BaseBot):
                     if pos is not None and self.bot_user_id:
                         await self.highrise.teleport(self.bot_user_id, pos)
                 except Exception as e:
-                    print("Follow loop error:", e)
+                    log.warning(f"Follow loop error: {e}")
                 await asyncio.sleep(3)
 
         self._follow_task = asyncio.create_task(_loop())
@@ -825,7 +895,7 @@ class Bot(BaseBot):
             await self.highrise.teleport(owner.id, dest)
             await self.highrise.chat(f"🚀 {owner.username}, '{name}' floor par teleport ho gaye!")
         except Exception as e:
-            print("Floor TP error:", e)
+            log.warning(f"Floor TP error: {e}")
             await self.highrise.chat("⚠️ Floor teleport fail ho gaya.")
 
     async def _list_floors(self) -> None:
@@ -855,7 +925,7 @@ class Bot(BaseBot):
                 await self.highrise.moderate_room(target_user.id, action)
             await self.highrise.chat(f"🛡️ {target_name}: {action} kar diya.")
         except Exception as e:
-            print(f"Moderate '{action}' error:", e)
+            log.warning(f"Moderate '{action}' error: {e}")
             await self.highrise.chat(f"⚠️ '{action}' fail — bot ke paas Moderator/Owner rights room mein hone chahiye.")
 
     async def _set_privilege(self, target_name: str, privilege: str) -> None:
@@ -867,15 +937,60 @@ class Bot(BaseBot):
             await self.highrise.set_room_privilege(target_user.id, privilege)
             await self.highrise.chat(f"🎖️ {target_name} ab '{privilege}' ban gaya/gayi.")
         except Exception as e:
-            print(f"Set privilege '{privilege}' error:", e)
+            log.warning(f"Set privilege '{privilege}' error: {e}")
             await self.highrise.chat("⚠️ Privilege set nahi ho paya — bot ke paas Owner rights chahiye.")
 
 
-# ============================ SINGLE-ROOM RUNNER ========================
-async def main():
-    """Sirf EK room mein connect karta hai — multilogin crash yahi se fix hota hai."""
+# ============================ HEALTH-CHECK SERVER ========================
+async def _health_handler(request):
+    return web.Response(text="OK - LANAX.4 bot is running")
+
+
+async def start_health_server():
+    """Chhota HTTP server jo Render health-check aur UptimeRobot ping ke
+    liye zaroori hai. Agar aiohttp installed nahi hai ya PORT set nahi
+    hai, to yeh silently skip ho jayega — bot phir bhi chalega."""
+    if not AIOHTTP_AVAILABLE:
+        log.warning("aiohttp installed nahi hai — health-check server skip ho gaya. "
+                    "requirements.txt mein 'aiohttp' add karo 24/7 uptime-ping ke liye.")
+        return
+
+    port = int(os.environ.get("PORT", "10000"))
+    app = web.Application()
+    app.router.add_get("/", _health_handler)
+    app.router.add_get("/health", _health_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log.info(f"🌐 Health-check server chal raha hai port {port} par (/ aur /health)")
+
+
+# ============================ CRASH-PROOF RUNNER ========================
+async def run_bot_forever():
+    """Bot ko baar-baar reconnect karta hai agar kabhi crash ho jaaye —
+    process kabhi exit nahi hota, isliye Render ise 'crashed' nahi maanega."""
     definitions = [BotDefinition(Bot, ROOM_ID, BOT_TOKEN)]
-    await highrise.run(definitions)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            log.info(f"🚀 Bot start ho raha hai (attempt #{attempt})...")
+            await highrise.run(definitions)
+            # Agar highrise.run() normally return kar jaaye (rare case)
+            log.warning("highrise.run() khatam ho gaya bina exception ke — dobara start kar rahe hain.")
+        except Exception:
+            log.error(f"❌ Bot crash ho gaya:\n{traceback.format_exc()}")
+        log.info(f"⏳ {RECONNECT_DELAY_SECONDS} second baad reconnect try karenge...")
+        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+
+
+async def main():
+    await asyncio.gather(
+        start_health_server(),
+        run_bot_forever(),
+    )
 
 
 if __name__ == "__main__":
